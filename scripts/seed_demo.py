@@ -1,7 +1,8 @@
-"""Seed reports tables and a live 15-minute drink board.
+"""Seed reports tables, a live 15-minute drink board, and weekend scorecard days.
 
 Demo dollars and item names follow real bakery patterns (Sat is the money day,
-wholesale inflates Thu/Mon, Peach often OOS). No Square keys live here.
+wholesale inflates Thu/Mon, Peach often OOS). Weekend days load from
+scripts/sample_weekend.json only if weekend tables are empty. No Square keys live here.
 """
 
 from __future__ import annotations
@@ -345,10 +346,15 @@ def main() -> None:
             print("reports tables already have rows; skip those")
         refresh_drink_tickets(db)
         n_loyal = seed_or_import_loyalty(db)
+        from scripts.load_weekend import load_if_empty
+
+        n_weekend = load_if_empty(db)
         db.commit()
         print(f"seeded {len(BOARD_TICKETS)} drink_tickets in the last 15 minutes")
         if n_loyal is not None:
             print(f"loyalty members now in db: {n_loyal}")
+        if n_weekend:
+            print(f"weekend_days now in db: {n_weekend}")
 
 
 if __name__ == "__main__":

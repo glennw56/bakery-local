@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -148,3 +148,41 @@ class LoyaltyEvent(Base):
     note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
 
     member: Mapped[LoyaltyMember] = relationship(back_populates="events")
+
+class WeekendDay(Base):
+    """One Saturday of aggregated retail sales. No phones, names, or order ids."""
+
+    __tablename__ = "weekend_days"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sold_on: Mapped[date] = mapped_column(Date, nullable=False, unique=True)
+    tickets: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pastry_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pastry_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    drink_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    drink_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    boba_modifiers: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    items: Mapped[list[WeekendItem]] = relationship(
+        back_populates="day",
+        cascade="all, delete-orphan",
+    )
+
+
+class WeekendItem(Base):
+    """Drink-mix or top-item units for a Saturday. kind is drink or top."""
+
+    __tablename__ = "weekend_items"
+    __table_args__ = (UniqueConstraint("day_id", "kind", "name", name="uq_weekend_item_day_kind_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    day_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("weekend_days.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="top")
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    day: Mapped[WeekendDay] = relationship(back_populates="items")

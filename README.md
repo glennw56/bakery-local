@@ -19,7 +19,7 @@ Open http://127.0.0.1:8000
 
 `setup.sh` creates `.venv`, installs `requirements.txt`, and runs `scripts.seed_demo` only if the db file is missing. `run.sh` starts uvicorn (`HOST=127.0.0.1`, `PORT=8000`, `RELOAD=1` by default). Same thing via `make setup` then `make run`.
 
-`seed_demo` writes reports tables (if empty), always refreshes ~8 drink tickets into the last 15 minutes so `/board` looks alive, and loads loyalty: if `data/square_loyalty.json` exists it upserts that dump; otherwise it seeds ~40 demo members. Loyalty seed is skipped when `loyalty_members` already has rows. Reports and tickets are never wiped by a loyalty import.
+`seed_demo` writes reports tables (if empty), always refreshes ~8 drink tickets into the last 15 minutes so `/board` looks alive, loads loyalty, and loads `scripts/sample_weekend.json` into `weekend_days` / `weekend_items` if those tables are empty. If `data/square_loyalty.json` exists it upserts that dump; otherwise it seeds ~40 demo members. Loyalty seed is skipped when `loyalty_members` already has rows. Reports, tickets, and weekend rows are never wiped by a loyalty import. Weekend seed does not smash the demo reports matrix.
 
 htmx 2.x is vendored at `static/htmx.min.js` (offline).
 
@@ -29,6 +29,8 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 | --- | --- |
 | `GET /` | Admin dashboard — stat tiles + links |
 | `GET /reports` | Weekend vs weekday, top items, drink × modifier, merch, site landmines |
+| `GET /weekend` | Marketing scorecard: this Saturday vs last (tickets, mix, top 10, do-not-feature) |
+| `GET /weekend.csv` | Same comparison, UTF-8 CSV (`metric`, `last_sat`, `this_sat`, `delta`) |
 | `GET /board` | Kitchen drink display (last 15 min, newest first; tap to clear) |
 | `GET /board/tickets` | Ticket-list fragment; HTMX polls every 10s |
 | `DELETE /board/tickets/{id}` | Tap-to-clear: drink is made, ticket drops off |
@@ -144,10 +146,10 @@ Keep this stack — do not rewrite it in Java or Angular. The mapping is small:
 | `@RestController` / `@Controller` methods | FastAPI routes in `app/main.py` (`@app.get`, `@app.post`, …) |
 | JPA `@Entity` + repository | SQLAlchemy 2.x models in `app/models.py`; sessions from `app/db.py` |
 | `spring.datasource.url` (H2 file) | `BAKERY_DB` / `data/app.db` (WAL). See `app/db.py` |
-| `@Service` under the controller | `app/loyalty.py` (filter/sort/stats/CSV) + `app/area_codes.py` (static NANP lookup) |
+| `@Service` under the controller | `app/loyalty.py` (filter/sort/stats/CSV) + `app/weekend.py` (Saturday vs Saturday) + `app/area_codes.py` (static NANP lookup) |
 | Angular component + HTTP client | Jinja templates render HTML on the server. HTMX (`hx-post`, `hx-delete`, `hx-target`) swaps a fragment in place — like a server-rendered partial, not a SPA component |
 | Angular dashboard poll / `setInterval` | Drink board: `hx-get="/board/tickets"` + `hx-trigger="every 10s"` replaces only the ticket list |
-| CSV export endpoint | `GET /loyalty.csv` — same filters as the list, UTF-8 attachment |
+| CSV export endpoint | `GET /loyalty.csv` and `GET /weekend.csv` — UTF-8 attachments |
 | H2 file mode / embedded DB | SQLite file `data/app.db` (WAL). Backup: `./scripts/backup.sh` |
 | `spring-boot:run` with restart | `./scripts/run.sh` (`RELOAD=1` → uvicorn `--reload`) |
 | `mvn test` | `./scripts/test.sh` or `make test` |

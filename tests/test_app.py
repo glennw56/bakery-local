@@ -140,3 +140,29 @@ def test_loyalty_csv_has_header_and_member_line() -> None:
     assert "state" in header
     assert len(lines) >= 2
     assert "points" in header
+
+
+def test_weekend_ok() -> None:
+    from scripts.seed_demo import main as seed_main
+
+    seed_main()
+    response = client.get("/weekend")
+    assert response.status_code == 200
+    assert "Aug 29" in response.text
+    assert "Vietnamese Coffee" in response.text
+
+
+def test_weekend_csv_has_header() -> None:
+    from scripts.seed_demo import main as seed_main
+
+    seed_main()
+    response = client.get("/weekend.csv")
+    assert response.status_code == 200
+    text = response.text.lstrip("\ufeff")
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    assert lines
+    header = lines[0].lower()
+    assert "metric" in header
+    assert "last_sat" in header
+    assert "this_sat" in header
+    assert "delta" in header

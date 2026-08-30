@@ -1,4 +1,4 @@
-"""FastAPI @Controller: admin dashboard, notes, reports, drink board, loyalty.
+"""FastAPI @Controller: admin dashboard, notes, reports, weekend, drink board, loyalty.
 
 Each @app.get / @app.post / @app.delete is a request mapping. Jinja templates
 are the view; HTMX swaps fragments in place (not an Angular SPA).
@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db, init_db
 from app.models import DrinkModifier, DrinkTicket, LoyaltyMember, MerchItem, Note, SalesDaily, SalesSummary
 from app import loyalty as loyalty_svc
+from app import weekend as weekend_svc
 
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = ROOT / "templates"
@@ -311,6 +312,30 @@ def reports_index(request: Request, db: Session = Depends(get_db)):
             "merch": merch,
         },
     )
+
+
+@app.get("/weekend", response_class=HTMLResponse)
+def weekend_index(
+    request: Request,
+    this: str = Query(""),
+    db: Session = Depends(get_db),
+):
+    """Marketing scorecard: this Saturday vs last. No live Square."""
+    card = weekend_svc.scorecard(db, this)
+    merch = db.scalars(select(MerchItem).order_by(MerchItem.id)).all()
+    return templates.TemplateResponse(
+        request,
+        "weekend/index.html",
+        {"card": card, "merch": merch},
+    )
+
+
+@app.get("/weekend.csv")
+def weekend_csv(this: str = Query(""), db: Session = Depends(get_db)):
+    card = weekend_svc.scorecard(db, this)
+    payload = weekend_svc.csv_bytes(card)
+    headers = {"Content-Disposition": 'attachment; filename="weekend-scorecard.csv"'}
+    return Response(content=payload, media_type="text/csv; charset=utf-8", headers=headers)
 
 
 @app.get("/board", response_class=HTMLResponse)

@@ -423,6 +423,18 @@ table.hometown tr.region-alabama { background: #fff8dc; }
 .kv dt { font-size: 0.78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: #555; }
 .kv dd { margin: 0; }
 
+.delta-up { color: var(--money); font-weight: 800; }
+.delta-down { color: var(--danger); font-weight: 800; }
+.pair-box {
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+}
+.pair-box p { margin: 0; font-size: 1.05rem; }
+.weekend-pills { margin-bottom: 0.8rem; }
+body.weekend main { max-width: 96rem; }
+
 @media (max-width: 800px) {
   .stat-grid { grid-template-columns: 1fr 1fr; }
   .summary-pills, .hometown-pills { grid-template-columns: 1fr; }

@@ -1,0 +1,66 @@
+{
+  "timezone": "America/Chicago",
+  "note": "Completed Square retail lines, wholesale excluded. Aggregated counts only. No phones, names, or order ids.",
+  "days": [
+    {
+      "sold_on": "2026-08-22",
+      "tickets": 120,
+      "gross_cents": 313766,
+      "pastry_qty": 278,
+      "pastry_cents": 225715,
+      "drink_qty": 159,
+      "drink_cents": 58343,
+      "boba_modifiers": 32,
+      "drinks": {
+        "Vietnamese Coffee": 71,
+        "Fruit Tea": 35,
+        "Biscoff Coffee": 19,
+        "Matcha Latte": 17,
+        "Milk Tea": 15,
+        "Coffee Latte": 2
+      },
+      "top_items": [
+        ["Vietnamese Coffee", 71],
+        ["Fruit Tea", 35],
+        ["Feta Spinach Danish", 20],
+        ["Biscoff Coffee", 19],
+        ["Biscoff Roll", 17],
+        ["Matcha Latte", 17],
+        ["Cream Cheese Danish", 17],
+        ["Milk Tea", 15],
+        ["Sausage Croissant", 14],
+        ["Cinnamon Roll", 13]
+      ]
+    },
+    {
+      "sold_on": "2026-08-29",
+      "tickets": 99,
+      "gross_cents": 237810,
+      "pastry_qty": 197,
+      "pastry_cents": 166496,
+      "drink_qty": 76,
+      "drink_cents": 49822,
+      "boba_modifiers": 20,
+      "drinks": {
+        "Vietnamese Coffee": 26,
+        "Fruit Tea": 18,
+        "Milk Tea": 12,
+        "Matcha Latte": 10,
+        "Biscoff Coffee": 6,
+        "Coffee Latte": 4
+      },
+      "top_items": [
+        ["Vietnamese Coffee", 26],
+        ["Fruit Tea", 18],
+        ["Feta Spinach Danish", 12],
+        ["Milk Tea", 12],
+        ["Cream Cheese Danish", 12],
+        ["Ham and Cheese Croissant", 11],
+        ["Mango Entrement", 11],
+        ["Matcha Latte", 10],
+        ["Pistachio Croissant", 9],
+        ["Mango Passion Fruit Macaron", 9]
+      ]
+    }
+  ]
+}
