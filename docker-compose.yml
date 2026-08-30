@@ -1,0 +1,10 @@
+services:
+  bakery:
+    build: .
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      BAKERY_DB: /app/data/app.db
+      PORT: "8000"

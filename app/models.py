@@ -1,4 +1,5 @@
-"""SQLAlchemy 2.x models."""
+"""SQLAlchemy 2.x entities (JPA @Entity). Sessions come from app/db.py.
+"""
 
 from __future__ import annotations
 

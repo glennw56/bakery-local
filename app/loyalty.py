@@ -1,4 +1,7 @@
-"""Loyalty list/dossier helpers. Maps to a Spring service sitting under the controller."""
+"""Loyalty @Service under the controller: filter, sort, stats, hometown rollup, CSV.
+
+Routes in app/main.py call this. Area-code geography is app/area_codes.py (static NANP).
+"""
 
 from __future__ import annotations
 

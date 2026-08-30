@@ -1,4 +1,4 @@
-"""Static NANP area-code geography.
+"""Static NANP area-code geography (@Service / lookup table).
 
 Public city/state only. No reverse-phone, skip-tracing, or paid lookup.
 Shop is Irondale AL: 205/659 are local Birmingham; other AL codes are in-state.

@@ -1,4 +1,12 @@
-"""FastAPI app: admin dashboard, notes, reports, drink board, loyalty."""
+"""FastAPI @Controller: admin dashboard, notes, reports, drink board, loyalty.
+
+Each @app.get / @app.post / @app.delete is a request mapping. Jinja templates
+are the view; HTMX swaps fragments in place (not an Angular SPA).
+
+Drink board: last N minutes (default 15), newest first (ordered_at desc).
+Tap a ticket → DELETE /board/tickets/{id} (drink is made, it drops off).
+Demo drink is POST /board/demo-tick. Poll: GET /board/tickets every 10s.
+"""
 
 from __future__ import annotations
 
@@ -172,6 +180,7 @@ def clamp_minutes(minutes: int) -> int:
 
 
 def tickets_in_window(db: Session, minutes: int) -> list[DrinkTicket]:
+    # Newest first. Tap-to-clear deletes the row (see board_ticket_done).
     cutoff = _utc_now() - timedelta(minutes=minutes)
     return db.scalars(
         select(DrinkTicket)

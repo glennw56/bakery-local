@@ -1,127 +1,119 @@
 # Bakery Local
 
-A local-first shop notebook, reports desk, drink kitchen display, and loyalty
-member book. One SQLite file on disk, no cloud required, no Square keys in this repo.
+## What this is
 
-SQLite is the whole backend: a single file (`data/app.db`) you can copy, back up, or
-delete. WAL mode lets the UI keep reading while a later import writes. There is no
-Postgres, no Docker, and no hosted database to provision. GitHub is not required.
+Local-first shop notebook, reports desk, drink kitchen display, and loyalty member book. FastAPI + Jinja + HTMX + one SQLite file (`data/app.db`, WAL). No cloud, no Postgres.
 
-## If you know Spring Boot + Angular
+**Not in git:** Square tokens / API keys, private SSH keys, the live sqlite file, and the loyalty dump (`data/square_loyalty.json`). `data/*` is gitignored except `data/.gitkeep`. Copy `.env.example` to `.env` if you want local HOST/PORT; do not put Square keys there either.
 
-Keep this stack — do not rewrite it in Java or Angular. The mapping is small:
+## Quick start
 
-| You already know | Here |
-| --- | --- |
-| `@RestController` / `@Controller` methods | FastAPI routes in `app/main.py` (`@app.get`, `@app.post`, …) |
-| JPA `@Entity` + repository | SQLAlchemy 2.x models in `app/models.py`; sessions from `app/db.py` |
-| Angular component + HTTP client | Jinja templates render HTML on the server. HTMX (`hx-post`, `hx-delete`, `hx-target`) swaps a fragment in place — like a server-rendered partial, not a SPA component |
-| Angular dashboard poll / `setInterval` | Drink board: `hx-get="/board/tickets"` + `hx-trigger="every 10s"` replaces only the ticket list |
-| `@Service` under the controller | `app/loyalty.py` (filter/sort/stats/CSV) + `app/area_codes.py` (static NANP lookup) |
-| CSV export endpoint | `GET /loyalty.csv` — same filters as the list, UTF-8 attachment |
-| H2 file mode / embedded DB | SQLite file `data/app.db` (WAL). Backup: `cp data/app.db` |
-| `spring-boot:run` with restart | `PYTHONPATH=. uvicorn app.main:app --reload` |
-
-`templates/notes/_row.html` is the fragment (one note). `templates/board/_tickets.html`
-is the fragment (the drink tickets). The list page posts into `#notes-list` and never
-full-reloads. The board polls `#ticket-list` the same way. That is the whole “frontend.”
-
-## Screens
-
-- `/` — admin dashboard (stat tiles + links to Reports, Loyalty, Drink board, Notes)
-- `/reports` — weekend vs weekday, top items, drink × modifier, merch, site landmines
-- `/loyalty` — member book: search, segment chips, hometown rollup, dense table, CSV export
-- `/loyalty/{id}` — one-member dossier (balance, marketing, points ledger)
-- `/board` — kitchen drink display (last 15 minutes, newest first; tap a ticket to clear it)
-- `/notes` — scratch pad
-
-## Run
-
-Python 3.12+ from the repo root:
+From the repo root (Python 3.12+):
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-PYTHONPATH=. .venv/bin/python -m scripts.seed_demo
-PYTHONPATH=. .venv/bin/uvicorn app.main:app --reload
+./scripts/setup.sh
+./scripts/run.sh
 ```
 
 Open http://127.0.0.1:8000
 
-`seed_demo` writes reports tables (if empty), always refreshes ~8 drink tickets
-into the last 15 minutes so `/board` looks alive, and loads loyalty: if
-`data/square_loyalty.json` exists it upserts that dump; otherwise it seeds ~40 demo
-members. Loyalty seed is skipped when `loyalty_members` already has rows. Reports
-and tickets are never wiped by a loyalty import.
+`setup.sh` creates `.venv`, installs `requirements.txt`, and runs `scripts.seed_demo` only if the db file is missing. `run.sh` starts uvicorn (`HOST=127.0.0.1`, `PORT=8000`, `RELOAD=1` by default). Same thing via `make setup` then `make run`.
 
-Tests:
+`seed_demo` writes reports tables (if empty), always refreshes ~8 drink tickets into the last 15 minutes so `/board` looks alive, and loads loyalty: if `data/square_loyalty.json` exists it upserts that dump; otherwise it seeds ~40 demo members. Loyalty seed is skipped when `loyalty_members` already has rows. Reports and tickets are never wiped by a loyalty import.
 
-```bash
-PYTHONPATH=. .venv/bin/pytest -q
-```
+htmx 2.x is vendored at `static/htmx.min.js` (offline).
 
-htmx 2.x is vendored at `static/htmx.min.js` (offline). CDN equivalent:
-`https://unpkg.com/htmx.org@2.0.10/dist/htmx.min.js`
+## Screens / tools inventory
 
-## Drink board on a tablet in the shop
+| Route | What |
+| --- | --- |
+| `GET /` | Admin dashboard — stat tiles + links |
+| `GET /reports` | Weekend vs weekday, top items, drink × modifier, merch, site landmines |
+| `GET /board` | Kitchen drink display (last 15 min, newest first; tap to clear) |
+| `GET /board/tickets` | Ticket-list fragment; HTMX polls every 10s |
+| `DELETE /board/tickets/{id}` | Tap-to-clear: drink is made, ticket drops off |
+| `POST /board/demo-tick` | Dev-only: insert a random demo drink (no Square) |
+| `GET /loyalty` | Member book: search, segment chips, hometown rollup, dense table |
+| `GET /loyalty.csv` | Same filters as the list, UTF-8 CSV attachment |
+| `GET /loyalty/{id}` | One-member dossier (balance, marketing, points ledger) |
+| `GET /notes` | Scratch pad |
+| `POST /notes` | Add a note (HTMX inserts a row) |
+| `DELETE /notes/{id}` | Remove a note |
 
-1. On the shop laptop, from this folder, bind every interface so the tablet can reach it:
+## Shop laptop + tablet drink board
+
+1. On the shop laptop, from this folder, bind every interface:
 
    ```bash
-   PYTHONPATH=. .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+   HOST=0.0.0.0 ./scripts/run.sh
    ```
 
-2. Find the laptop’s LAN address (Wi‑Fi / Settings, or `ip addr` / `ipconfig`).
-   Example: `192.168.1.20`.
+   Or `make board`. (`RELOAD=0 HOST=0.0.0.0 ./scripts/run.sh` if you do not want `--reload`.)
+
+2. Laptop LAN address: Wi-Fi / Settings, or `ip addr` / `ipconfig`. Example: `192.168.1.20`.
 3. On the tablet, open `http://192.168.1.20:8000/board`.
-4. Add to Home Screen if you want. Keep the tablet plugged in, brightness up,
-   auto-lock off.
+4. Add to Home Screen if you want. Keep the tablet plugged in, brightness up, auto-lock off.
 
-`?minutes=15` is the default window. Newest tickets sit first. Tap a ticket when
-the drink is done and it drops off the board. The list refreshes every 10 seconds.
+`?minutes=15` is the default window. Newest tickets sit first. Tap a ticket when the drink is done and it drops off. The list refreshes every 10 seconds.
 
-Dev-only: the **Demo drink** button (or `POST /board/demo-tick`) inserts a random
-demo drink so you can test the UI without Square.
+## Loyalty + CSV + hometown
 
+`GET /loyalty` is the Marketing/Books desk. Filter by name/phone/email, segment (active / lapsed / ready to redeem / never purchased / email / phone-only / local 205 / Alabama / out of state / unknown phone), and sort.
 
-## Loyalty member book
+Hometown rollup is NANP **area-code** geography only (205/659 = Birmingham / Irondale local). No street lookup, no reverse-phone API, no skip-tracing.
 
-`GET /loyalty` is the Marketing/Books desk. Filter by name/phone/email, segment
-(active / lapsed / ready to redeem / never purchased / email / phone-only / local
-205 / Alabama / out of state / unknown phone), and sort. Hometown rollup is NANP
-area-code geography only (205/659 = Birmingham / Irondale local). No reverse-phone
-API, no skip-tracing.
+`GET /loyalty.csv` downloads the current filter as UTF-8 CSV (`area_code`, `metro`, `state` included). `GET /loyalty/{id}` is the dossier.
 
-`GET /loyalty.csv` downloads the current filter as UTF-8 CSV (area_code, metro, state
-included). `GET /loyalty/{id}` is the dossier.
+Square facts modeled here: 1 point per $1 before tax; 100 pts = free Fruit Tea; 200 pts = $10 off entire sale. LoyaltyAccount has phone + points, not email or favorite item — those fields are denormalized onto the member row so the list stays useful when order joins are sparse.
 
-Square facts modeled here: 1 point per $1 before tax; 100 pts = free Fruit Tea;
-200 pts = $10 off entire sale. LoyaltyAccount has phone + points, not email or
-favorite item — those fields are denormalized onto the member row so the list stays
-useful when order joins are sparse.
+## Recreate from GitHub
 
-Import a dump (no tokens; file on disk only):
+Repo is meant to be **private**: https://github.com/glennw56/bakery-local
+
+```bash
+git clone https://github.com/glennw56/bakery-local.git
+cd bakery-local
+./scripts/setup.sh
+./scripts/run.sh
+```
+
+Then http://127.0.0.1:8000. You get a demo sqlite file, not the live shop db and not the loyalty dump. Copy those onto the laptop separately (USB, scp) — they are not in git. Preferred path on the shop laptop is venv (`setup.sh` / `run.sh`). Docker is optional; see below.
+
+## Backup / restore the sqlite file
+
+```bash
+./scripts/backup.sh
+```
+
+Copies `data/app.db` (or `$BAKERY_DB`) to `data/backups/app-YYYYMMDD-HHMM.db` (UTC stamp). `data/backups/` is gitignored via `data/*`.
+
+Restore: stop uvicorn, then replace the live file:
+
+```bash
+cp data/backups/app-YYYYMMDD-HHMM.db data/app.db
+```
+
+If WAL files exist (`data/app.db-wal`, `data/app.db-shm`), stop the app first so the copy is consistent. Same idea as copying an H2 file db.
+
+## Import loyalty JSON / drink tickets JSON
+
+No tokens. Files on disk only. Do not commit `data/square_loyalty.json`.
+
+Loyalty dump:
 
 ```bash
 PYTHONPATH=. .venv/bin/python -m scripts.import_loyalty data/square_loyalty.json
 ```
 
-Shape: `{ "program": { "id", "accrual", "rewards" }, "members": [ { "loyalty_id",
-"customer_id", "phone", "points", "lifetime_points", "enrolled_at", "area_code",
-"area_metro", "area_state", "area_region", "events": [...] } ] }`. Names/email are
-optional. Safe to re-run (upsert by `square_loyalty_id`).
+Shape: `{ "program": { "id", "accrual", "rewards" }, "members": [ { "loyalty_id", "customer_id", "phone", "points", "lifetime_points", "enrolled_at", "area_code", "area_metro", "area_state", "area_region", "events": [...] } ] }`. Names/email are optional. Safe to re-run (upsert by `square_loyalty_id`).
 
-## Drop a JSON file of tickets
-
-Until a live Square pull exists, save tickets to a JSON file and import:
+Drink tickets (until a live Square pull exists):
 
 ```bash
 PYTHONPATH=. .venv/bin/python -m scripts.import_drinks_json scripts/sample_tickets.json
 ```
 
-Shape (object with `tickets`, or a bare array). `ordered_at` is ISO-8601; a missing
-timezone is treated as America/Chicago. `modifiers` can be a list of
-`{group, value}`, a dict, or a list of strings.
+Shape (object with `tickets`, or a bare array). `ordered_at` is ISO-8601; a missing timezone is treated as America/Chicago. `modifiers` can be a list of `{group, value}`, a dict, or a list of strings.
 
 ```json
 {
@@ -141,20 +133,48 @@ timezone is treated as America/Chicago. `modifiers` can be a list of
 }
 ```
 
-A later Square import can land in the same `drink_tickets` / `sales_*` tables.
-Do not put Square API tokens in this repo.
+A later Square import can land in the same `drink_tickets` / `sales_*` tables. Do not put Square API tokens in this repo.
+
+## Spring Boot + Angular map
+
+Keep this stack — do not rewrite it in Java or Angular. The mapping is small:
+
+| You already know | Here |
+| --- | --- |
+| `@RestController` / `@Controller` methods | FastAPI routes in `app/main.py` (`@app.get`, `@app.post`, …) |
+| JPA `@Entity` + repository | SQLAlchemy 2.x models in `app/models.py`; sessions from `app/db.py` |
+| `spring.datasource.url` (H2 file) | `BAKERY_DB` / `data/app.db` (WAL). See `app/db.py` |
+| `@Service` under the controller | `app/loyalty.py` (filter/sort/stats/CSV) + `app/area_codes.py` (static NANP lookup) |
+| Angular component + HTTP client | Jinja templates render HTML on the server. HTMX (`hx-post`, `hx-delete`, `hx-target`) swaps a fragment in place — like a server-rendered partial, not a SPA component |
+| Angular dashboard poll / `setInterval` | Drink board: `hx-get="/board/tickets"` + `hx-trigger="every 10s"` replaces only the ticket list |
+| CSV export endpoint | `GET /loyalty.csv` — same filters as the list, UTF-8 attachment |
+| H2 file mode / embedded DB | SQLite file `data/app.db` (WAL). Backup: `./scripts/backup.sh` |
+| `spring-boot:run` with restart | `./scripts/run.sh` (`RELOAD=1` → uvicorn `--reload`) |
+| `mvn test` | `./scripts/test.sh` or `make test` |
+| Optional Docker image | `Dockerfile` + `docker-compose.yml` — not required on the shop laptop |
+
+`templates/notes/_row.html` is the fragment (one note). `templates/board/_tickets.html` is the fragment (the drink tickets). The list page posts into `#notes-list` and never full-reloads. The board polls `#ticket-list` the same way. That is the whole “frontend.”
+
+## Tests
+
+```bash
+./scripts/test.sh
+```
+
+Or `make test`, or `PYTHONPATH=. .venv/bin/pytest -q`. Uses a throwaway sqlite file (`BAKERY_DB` tempfile); does not touch `data/app.db`.
 
 ## Add a page
 
 1. Copy a template under `templates/` (extend `base.html`).
 2. Add a route in `app/main.py` that returns `templates.TemplateResponse(...)`.
-3. Link it from the header or dashboard. For in-page updates, `hx-get` the route
-   and set `hx-target` on the element you want to replace.
+3. Link it from the header or dashboard. For in-page updates, `hx-get` the route and set `hx-target` on the element you want to replace.
 
-## Backup
+## Optional Docker
+
+Not required. Preferred on the shop laptop is venv. If you want clone-and-up:
 
 ```bash
-cp data/app.db data/app.db.bak
+docker compose up --build
 ```
 
-`data/` contents are gitignored except `.gitkeep`.
+`./data` is mounted so `app.db` survives container rebuilds. First start seeds demo data if the db file is missing. Then http://127.0.0.1:8000. Image is `python:3.12-slim`, non-root, listens on `0.0.0.0:8000`.

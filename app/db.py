@@ -1,6 +1,8 @@
-"""SQLite engine, sessions, and table bootstrap.
+"""SQLite DataSource: engine, sessions, and table bootstrap.
 
 WAL mode lets the UI keep serving while a later import writes the same file.
+BAKERY_DB overrides the file path (default data/app.db) — analogous to
+spring.datasource.url pointing at an H2/SQLite file.
 """
 
 from __future__ import annotations
