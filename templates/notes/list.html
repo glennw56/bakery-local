@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Notes · Bakery Local{% endblock %}
+{% block content %}
+  <h1>Notes</h1>
+  <form class="note-form"
+        hx-post="/notes"
+        hx-target="#notes-list"
+        hx-swap="afterbegin"
+        hx-on::after-request="if(event.detail.successful) this.reset()">
+    <label>
+      Title
+      <input type="text" name="title" required maxlength="255" placeholder="e.g. Order extra taro">
+    </label>
+    <label>
+      Body
+      <textarea name="body" rows="3" placeholder="Optional details"></textarea>
+    </label>
+    <button type="submit">Add note</button>
+  </form>
+  <ul id="notes-list" class="notes-list">
+    {% for note in notes %}
+      {% include "notes/_row.html" %}
+    {% else %}
+    {% endfor %}
+  </ul>
+{% endblock %}

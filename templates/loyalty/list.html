@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Loyalty · Bakery Local{% endblock %}
+{% block body_class %}loyalty{% endblock %}
+{% block content %}
+  <h1>Loyalty</h1>
+  <p class="lede">{{ program.merchant }}, {{ program.location }}. {{ program.accrual }}. Rewards: {% for r in program.rewards %}{{ r.points }} pts = {{ r.name }}{% if not loop.last %}; {% endif %}{% endfor %}. Hometown is area-code geography only (Irondale sits in 205).</p>
+
+  <section class="stat-grid loyalty-stats" aria-label="Loyalty book">
+    <article class="stat-tile">
+      <span class="stat-label">Members</span>
+      <strong class="stat-value">{{ stats.members }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Points out</span>
+      <strong class="stat-value">{{ stats.points }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Lifetime pts</span>
+      <strong class="stat-value">{{ stats.lifetime_points }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Active 30d</span>
+      <strong class="stat-value">{{ stats.active_30 }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Lapsed 60+</span>
+      <strong class="stat-value">{{ stats.lapsed_60 }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Ready ≥100</span>
+      <strong class="stat-value">{{ stats.ready }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">With email</span>
+      <strong class="stat-value">{{ stats.with_email }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Phone only</span>
+      <strong class="stat-value">{{ stats.phone_only }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Never purchased</span>
+      <strong class="stat-value">{{ stats.never }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Avg lifetime $</span>
+      <strong class="stat-value stat-text">{{ stats.avg_spend_cents|dollars }}</strong>
+    </article>
+  </section>
+
+  <section class="hometown-pills" aria-label="Hometown split">
+    <div><span>Local 205/659</span><strong>{{ regions.local }}</strong></div>
+    <div><span>Other Alabama</span><strong>{{ regions.alabama }}</strong></div>
+    <div><span>Out of state</span><strong>{{ regions.out_of_state }}</strong></div>
+    <div><span>Unknown phone</span><strong>{{ regions.unknown }}</strong></div>
+  </section>
+
+  <form class="loyalty-filters" method="get" action="/loyalty">
+    <label>
+      Search
+      <input type="search" name="q" value="{{ q }}" placeholder="Name, phone, email">
+    </label>
+    <label>
+      Sort
+      <select name="sort">
+        {% for value, label in sorts %}
+        <option value="{{ value }}" {% if sort == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Dir
+      <select name="dir">
+        <option value="desc" {% if dir == "desc" %}selected{% endif %}>Desc</option>
+        <option value="asc" {% if dir == "asc" %}selected{% endif %}>Asc</option>
+      </select>
+    </label>
+    <input type="hidden" name="segment" value="{{ segment }}">
+    <button type="submit">Apply</button>
+    <a class="csv-link" href="/loyalty.csv{% if csv_qs %}?{{ csv_qs }}{% endif %}">Export CSV</a>
+  </form>
+
+  <nav class="chip-bar" aria-label="Segments">
+    {% for value, label in chips %}
+    <a class="chip{% if segment == value %} is-on{% endif %}"
+       href="/loyalty?q={{ q|urlencode }}&amp;segment={{ value }}&amp;sort={{ sort }}&amp;dir={{ dir }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+
+  <section class="report-block">
+    <h2>Hometown · members by metro / area code</h2>
+    <p class="hint">NANP city/state from the phone prefix — not a reverse-address lookup. Local 205/659 is Birmingham / Irondale.</p>
+    {% if hometown %}
+    <div class="table-wrap">
+    <table class="sales hometown">
+      <thead>
+        <tr>
+          <th>Area</th>
+          <th>Metro</th>
+          <th>State</th>
+          <th>Region</th>
+          <th class="num">Members</th>
+          <th class="num">% of view</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in hometown %}
+        <tr class="region-{{ row.region }}">
+          <td>{{ row.area_code }}</td>
+          <td>{{ row.metro }}</td>
+          <td>{{ row.state }}</td>
+          <td>{{ row.region }}</td>
+          <td class="num">{{ row.count }}</td>
+          <td class="num">{{ row.pct }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p>No members in this view.</p>
+    {% endif %}
+  </section>
+
+  <section class="report-block">
+    <h2>Members</h2>
+    {% if members %}
+    <p class="hint">{{ members|length }} row{% if members|length != 1 %}s{% endif %}. Green = ready to redeem (≥100). Amber = lapsed 60d+. Click a name for the dossier.</p>
+    <div class="table-wrap">
+    <table class="sales loyalty-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Phone</th>
+          <th>Email</th>
+          <th>Area / metro</th>
+          <th class="num">Pts</th>
+          <th class="num">Life pts</th>
+          <th>Next reward</th>
+          <th class="num">Visits</th>
+          <th>Last visit</th>
+          <th class="num">Life $</th>
+          <th>Favorite</th>
+          <th>Source</th>
+          <th>Segments</th>
+          <th>Enrolled</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in members %}
+        <tr class="{{ row.row_class }}">
+          <td>
+            <a href="/loyalty/{{ row.id }}">{% if row.has_name %}{{ row.display_name }}{% else %}<span class="muted">Phone only</span>{% endif %}</a>
+          </td>
+          <td class="nowrap">{{ row.phone_fmt or "—" }}</td>
+          <td>{% if row.email %}{{ row.email }}{% if row.unsubscribed %} <span class="oos">Unsub</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>{{ row.geo_label }}</td>
+          <td class="num">{{ row.points }}</td>
+          <td class="num">{{ row.lifetime_points }}</td>
+          <td class="nowrap">{{ row.next_reward_label }}</td>
+          <td class="num">{{ row.visits }}</td>
+          <td class="nowrap">{% if row.last_visit %}{{ row.last_visit }} · {{ row.last_visit_days }}d{% else %}—{% endif %}</td>
+          <td class="num">{{ row.lifetime_cents|dollars }}</td>
+          <td>{% if row.member.favorite_drink or row.member.favorite_item %}{{ row.member.favorite_drink or row.member.favorite_item }}{% if row.member.favorite_modifier %} · {{ row.member.favorite_modifier }}{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>{{ row.member.creation_source or "—" }}</td>
+          <td>{% for tag in row.segments %}<span class="seg-pill">{{ tag }}</span>{% else %}<span class="muted">—</span>{% endfor %}</td>
+          <td class="nowrap">{{ row.enrolled or "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No loyalty members match. If the table is empty, drop <code>data/square_loyalty.json</code> and run <code>PYTHONPATH=. .venv/bin/python -m scripts.seed_demo</code> (or <code>python -m scripts.import_loyalty</code>).</p>
+    {% endif %}
+  </section>
+{% endblock %}

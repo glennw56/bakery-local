@@ -1,0 +1,13 @@
+<li class="note-row" id="note-{{ note.id }}">
+  <div class="note-body">
+    <strong>{{ note.title }}</strong>
+    {% if note.body %}<p>{{ note.body }}</p>{% endif %}
+    <time datetime="{{ note.created_at.isoformat() }}">{{ note.created_at.strftime("%Y-%m-%d %H:%M") }}</time>
+  </div>
+  <button type="button"
+          class="danger"
+          hx-delete="/notes/{{ note.id }}"
+          hx-target="#note-{{ note.id }}"
+          hx-swap="outerHTML"
+          hx-confirm="Delete this note?">Delete</button>
+</li>

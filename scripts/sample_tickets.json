@@ -1,0 +1,26 @@
+{
+  "tickets": [
+    {
+      "ordered_at": "2026-08-29T14:12:00-05:00",
+      "drink_name": "Fruit Tea",
+      "modifiers": [
+        {"group": "Flavor", "value": "Strawberry"},
+        {"group": "Boba", "value": "Strawberry Bursting"}
+      ],
+      "qty": 1,
+      "ticket_name": "Walk-in",
+      "source": "import"
+    },
+    {
+      "ordered_at": "2026-08-29T14:14:00-05:00",
+      "drink_name": "Viet Coffee",
+      "modifiers": [
+        {"group": "Sweet", "value": "25%"},
+        {"group": "Milk", "value": "Oat milk"}
+      ],
+      "qty": 1,
+      "ticket_name": "Counter",
+      "source": "import"
+    }
+  ]
+}

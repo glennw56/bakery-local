@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}{{ view.display_name }} · Loyalty{% endblock %}
+{% block body_class %}loyalty{% endblock %}
+{% block content %}
+  <p class="back"><a href="/loyalty">← Loyalty</a></p>
+
+  <header class="dossier-head">
+    <div>
+      <h1>{{ view.display_name }}</h1>
+      <p class="lede">
+        {% if view.phone_fmt %}<span class="nowrap">{{ view.phone_fmt }}</span>{% else %}No phone{% endif %}
+        {% if member.area_code %}
+          <span class="metro-under">{{ member.area_code }} · {{ member.area_metro or "Unknown" }}{% if member.area_state %}, {{ member.area_state }}{% endif %} · {{ member.area_region }}</span>
+        {% else %}
+          <span class="metro-under">Unknown phone geography</span>
+        {% endif %}
+      </p>
+      <p class="hint">
+        {% if view.email %}{{ view.email }}{% if view.unsubscribed %} · <span class="oos">Email unsubscribed</span>{% endif %}{% else %}No email{% endif %}
+        · enrolled {{ view.enrolled_stamp or "—" }}
+        · source {{ member.creation_source or "—" }}
+      </p>
+    </div>
+  </header>
+
+  <section class="stat-grid loyalty-stats" aria-label="Member totals">
+    <article class="stat-tile">
+      <span class="stat-label">Balance</span>
+      <strong class="stat-value">{{ view.points }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Lifetime pts</span>
+      <strong class="stat-value">{{ view.lifetime_points }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Visits</span>
+      <strong class="stat-value">{{ view.visits }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Lifetime $</span>
+      <strong class="stat-value stat-text">{{ view.lifetime_cents|dollars }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Last visit</span>
+      <strong class="stat-value stat-text">{% if view.last_visit %}{{ view.last_visit }} · {{ view.last_visit_days }}d{% else %}—{% endif %}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Next reward</span>
+      <strong class="stat-value stat-text">{{ view.next_reward_label }}</strong>
+    </article>
+  </section>
+
+  <section class="marketing-block">
+    <h2>Marketing</h2>
+    <dl class="kv">
+      <dt>Favorite drink</dt><dd>{{ member.favorite_drink or "—" }}</dd>
+      <dt>Favorite item</dt><dd>{{ member.favorite_item or "—" }}</dd>
+      <dt>Favorite modifier</dt><dd>{{ member.favorite_modifier or "—" }}</dd>
+      <dt>Segments</dt>
+      <dd>{% for tag in view.segments %}<span class="seg-pill">{{ tag }}</span>{% else %}—{% endfor %}</dd>
+      <dt>Days since visit</dt><dd>{% if view.last_visit_days is not none %}{{ view.last_visit_days }}{% else %}— (no visit date on file){% endif %}</dd>
+      <dt>Contact</dt>
+      <dd>{% if view.has_email and view.has_phone %}email + phone{% elif view.has_email %}email{% elif view.has_phone %}phone only{% else %}none{% endif %}{% if view.unsubscribed %} · unsubscribed{% endif %}</dd>
+      <dt>Usable for</dt><dd>{{ view.usable_for }}</dd>
+    </dl>
+  </section>
+
+  <section class="report-block">
+    <h2>Points ledger</h2>
+    {% if events %}
+    <table class="sales">
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Type</th>
+          <th class="num">Points</th>
+          <th>Order</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ev in events %}
+        <tr>
+          <td class="nowrap">{{ ev.at|chicago_stamp }}</td>
+          <td>{{ ev.event_type }}</td>
+          <td class="num">{% if ev.points > 0 %}+{% endif %}{{ ev.points }}</td>
+          <td>{{ ev.order_id or "—" }}</td>
+          <td>{{ ev.note or "" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">No ledger events on file for this member. Square event history has not been joined yet — balance still stands.</p>
+    {% endif %}
+  </section>
+{% endblock %}

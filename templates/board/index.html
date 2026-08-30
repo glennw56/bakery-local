@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Drink board · Bakery Local</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body class="kds">
+  <header class="kds-bar">
+    <div class="kds-title">
+      <a href="/">Admin</a>
+      <h1>Drink board</h1>
+      <span class="kds-window">Last {{ minutes }} min · newest first · tap a drink when it’s done · America/Chicago</span>
+    </div>
+    <form class="kds-tools" action="/board" method="get">
+      <label>
+        Window
+        <input type="number" name="minutes" min="1" max="180" value="{{ minutes }}">
+      </label>
+      <button type="submit">Set</button>
+      <button type="button"
+              class="kds-demo"
+              hx-post="/board/demo-tick?minutes={{ minutes }}"
+              hx-target="#ticket-list"
+              hx-swap="innerHTML">Demo drink</button>
+    </form>
+  </header>
+  <section id="ticket-list"
+           class="kds-list"
+           hx-get="/board/tickets?minutes={{ minutes }}"
+           hx-trigger="every 10s"
+           hx-swap="innerHTML">
+    {% include "board/_tickets.html" %}
+  </section>
+</body>
+</html>

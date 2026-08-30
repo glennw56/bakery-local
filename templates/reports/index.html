@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Reports · Bakery Local{% endblock %}
+{% block body_class %}reports{% endblock %}
+{% block content %}
+  <h1>Reports</h1>
+  <p class="lede">Local demo that matches shop patterns. A later Square import can land in these tables — no Square keys in this app. Print from the browser if you want a paper copy.</p>
+
+  <section class="report-block">
+    <h2>Weekend vs weekday</h2>
+    <p class="hint">Sat is the money day (~$2.5–3k, ~100 tickets, ~$27 avg). Weekdays run fewer tickets; wholesale inflates Thursday and Monday dollars.</p>
+    {% if summaries %}
+    <div class="summary-pills">
+      <div>
+        <span>Weekend</span>
+        <strong>{{ weekend_tickets }} tickets · {{ weekend_cents|dollars }}</strong>
+      </div>
+      <div>
+        <span>Weekday</span>
+        <strong>{{ weekday_tickets }} tickets · {{ weekday_cents|dollars }}</strong>
+      </div>
+    </div>
+    <table class="sales">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Day</th>
+          <th class="num">Tickets</th>
+          <th class="num">Sales</th>
+          <th class="num">Avg</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in summaries %}
+        <tr class="{% if row.sold_on.weekday() == 5 %}money-day{% endif %}{% if row.note == 'Wholesale' %} wholesale{% endif %}">
+          <td>{{ row.sold_on.isoformat() }}</td>
+          <td>{{ row.sold_on.strftime("%a") }}</td>
+          <td class="num">{{ row.tickets }}</td>
+          <td class="num">{{ row.cents|dollars }}</td>
+          <td class="num">{% if row.tickets %}{{ (row.cents / row.tickets)|dollars }}{% else %}—{% endif %}</td>
+          <td>{{ row.note }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>No daily totals yet. From the repo root run <code>PYTHONPATH=. .venv/bin/python -m scripts.seed_demo</code>.</p>
+    {% endif %}
+  </section>
+
+  <section class="report-block">
+    <h2>Top items</h2>
+    {% if top_items %}
+    <table class="sales">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th class="num">Qty</th>
+          <th class="num">Amount</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item_name, qty, cents in top_items %}
+        <tr>
+          <td>{{ item_name }}</td>
+          <td class="num">{{ qty }}</td>
+          <td class="num">{{ cents|dollars }}</td>
+          <td>{% if "Peach" in item_name %}<span class="oos">Often OOS</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>No item lines yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="report-block">
+    <h2>Drink × modifier</h2>
+    <p class="hint">Fruit Tea flavors strawberry / mango / peach. Milk Tea brown sugar / taro / thai + tapioca. Viet coffee 25% / 50% sweet + salted caramel + oat.</p>
+    {% if modifiers_by_drink %}
+      {% for drink, rows in modifiers_by_drink.items() %}
+      <h3 class="drink-head">{{ drink }}</h3>
+      <table class="sales">
+        <thead>
+          <tr>
+            <th>Group</th>
+            <th>Modifier</th>
+            <th class="num">Qty</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>{{ row.modifier_group }}</td>
+            <td>{{ row.modifier }}</td>
+            <td class="num">{{ row.qty }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endfor %}
+    {% else %}
+    <p>No modifier rows yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="report-block">
+    <h2>Merch on-hand</h2>
+    {% if merch %}
+    <table class="sales">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th class="num">Price</th>
+          <th class="num">Qty</th>
+          <th>Prep</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in merch %}
+        <tr>
+          <td>{{ item.name }}</td>
+          <td class="num">{{ item.price_cents|dollars }}</td>
+          <td class="num">{{ item.qty }}</td>
+          <td>{% if item.prep_days %}{{ item.prep_days }}-day prep{% endif %}{% if item.warning %} — {{ item.warning }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="warn-line">3-day prep warning: totes and lucky bags are not a same-day add-on. Do not run an impulse “grab one with your treats” line.</p>
+    {% else %}
+    <p>No merch rows yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="report-block landmines">
+    <h2>Site landmines</h2>
+    <p class="hint">Static callout — not a live site scan. Do not promote Order Online until Shop Tech fixes the ZIP.</p>
+    <ul class="landmine-list">
+      <li><strong>Order Online ZIP 75022</strong> — pickup radius is stuck on Lewisville TX / +100 miles. Do not send customers to Order Online.</li>
+      <li><strong>Hours vs order window</strong> — shop talk is 9am; the order window on the site starts at 10am. Do not print hours from the site.</li>
+      <li><strong>Apple / Peach featured but OOS</strong> — featured strip can show items that are not in the case. Peach Entrement is often OOS.</li>
+      <li><strong>Bread category empty</strong> — do not point people at the bread category on the site.</li>
+    </ul>
+  </section>
+{% endblock %}

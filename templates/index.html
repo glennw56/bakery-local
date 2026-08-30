@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Admin · Bakery Local{% endblock %}
+{% block body_class %}admin{% endblock %}
+{% block content %}
+  <h1>Admin</h1>
+  <p class="lede">Back office for this machine. Data is <code>data/app.db</code>. No cloud, no Square keys in this app.</p>
+
+  <section class="stat-grid" aria-label="Live counts">
+    <article class="stat-tile">
+      <span class="stat-label">Tickets</span>
+      <strong class="stat-value">{{ ticket_count }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Drinks</span>
+      <strong class="stat-value">{{ drink_count }}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Top drink</span>
+      <strong class="stat-value stat-text">{% if top_drink %}{{ top_drink }}{% else %}—{% endif %}</strong>
+    </article>
+    <article class="stat-tile">
+      <span class="stat-label">Last order</span>
+      <strong class="stat-value stat-text">{% if last_order_empty %}—{% else %}{{ last_order }}{% endif %}</strong>
+    </article>
+  </section>
+
+  <ul class="cards">
+    <li>
+      <a href="/reports">
+        <strong>Reports</strong>
+        <span>Weekend vs weekday, top items, drink modifiers, merch on-hand, site landmines.</span>
+      </a>
+    </li>
+    <li>
+      <a href="/loyalty">
+        <strong>Loyalty</strong>
+        <span>{% if loyalty_count %}{{ loyalty_count }} members{% else %}Member book{% endif %} — scan, filter, drill in, export CSV for Marketing. Hometown by area code.</span>
+      </a>
+    </li>
+    <li>
+      <a href="/board">
+        <strong>Drink board</strong>
+        <span>Kitchen display — last 15 minutes, newest first, auto-refresh. Open this on the shop tablet.</span>
+      </a>
+    </li>
+    <li>
+      <a href="/notes">
+        <strong>Notes</strong>
+        <span>Scratch pad — create and delete without a full page reload.</span>
+      </a>
+    </li>
+  </ul>
+{% endblock %}
