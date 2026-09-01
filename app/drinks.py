@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DrinkTicket
+from app.models import DrinkIngestSeen, DrinkTicket
 
 # True if the line name contains any of these (casefold), after skip rules.
 _DRINK_NEEDLES = (
@@ -137,13 +137,22 @@ def tickets_from_order(order_dict: dict, payment_dict: dict) -> list[dict]:
 
 
 def upsert_tickets(db: Session, tickets: list[dict]) -> tuple[int, int]:
-    """Insert tickets; skip if (square_order_id, square_line_uid) already exists."""
+    """Insert tickets; skip if this Square line was already ingested.
+
+    drink_ingest_seen survives tap-to-clear so --watch does not put a
+    finished drink back on the board.
+    """
     inserted = 0
     skipped = 0
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     for kw in tickets:
-        oid = kw.get("square_order_id")
-        uid = kw.get("square_line_uid")
+        oid = str(kw.get("square_order_id") or "").strip()
+        uid = str(kw.get("square_line_uid") or "").strip()
         if oid and uid:
+            seen = db.get(DrinkIngestSeen, (oid, uid))
+            if seen is not None:
+                skipped += 1
+                continue
             found = db.scalar(
                 select(DrinkTicket.id).where(
                     DrinkTicket.square_order_id == oid,
@@ -154,6 +163,14 @@ def upsert_tickets(db: Session, tickets: list[dict]) -> tuple[int, int]:
                 skipped += 1
                 continue
         db.add(DrinkTicket(**kw))
+        if oid and uid:
+            db.add(
+                DrinkIngestSeen(
+                    square_order_id=oid,
+                    square_line_uid=uid,
+                    ingested_at=now,
+                )
+            )
         inserted += 1
     db.commit()
     return inserted, skipped

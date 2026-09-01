@@ -99,6 +99,16 @@ class DrinkTicket(Base):
     square_line_uid: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
 
 
+class DrinkIngestSeen(Base):
+    """Square order+line keys so tap-to-clear does not re-ingest the same drink."""
+
+    __tablename__ = "drink_ingest_seen"
+
+    square_order_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    square_line_uid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class LoyaltyMember(Base):
     """One Square loyalty account, denormalized for list/export.
 

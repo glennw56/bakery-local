@@ -81,3 +81,25 @@ def test_duplicate_square_line_skipped() -> None:
             )
         )
         assert count == 1
+
+
+
+def test_cleared_ticket_does_not_reingest() -> None:
+    init_db()
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    rows = tickets_from_order(data["order"], data["payment"])
+    with SessionLocal() as db:
+        upsert_tickets(db, rows)
+        ticket = db.scalar(
+            select(DrinkTicket).where(DrinkTicket.square_order_id == "ORDER_FAKE_TEST_001")
+        )
+        assert ticket is not None
+        db.delete(ticket)
+        db.commit()
+    with SessionLocal() as db:
+        ins, skip = upsert_tickets(db, rows)
+        assert ins == 0
+        assert skip == 1
+        assert db.scalar(select(func.count()).select_from(DrinkTicket).where(
+            DrinkTicket.square_order_id == "ORDER_FAKE_TEST_001"
+        )) == 0
