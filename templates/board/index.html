@@ -34,5 +34,8 @@
            hx-swap="innerHTML">
     {% include "board/_tickets.html" %}
   </section>
+  {% if ding_new %}
+  <script src="/static/board-ding.js"></script>
+  {% endif %}
 </body>
 </html>

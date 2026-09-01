@@ -473,6 +473,7 @@ def board_page(
         {
             "minutes": minutes,
             "orders": board_orders(request, db, minutes),
+            "ding_new": bakery_service() == "drinks" or bool((os.environ.get("GETORDERS_URL") or "").strip()),
         },
     )
 

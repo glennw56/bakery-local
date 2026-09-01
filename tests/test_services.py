@@ -32,3 +32,10 @@ def test_desk_loyalty_ok_board_404(monkeypatch) -> None:
     assert board.status_code == 404
     ingest = client.post("/internal/ingest")
     assert ingest.status_code == 404
+
+
+def test_drinks_board_includes_ding_script(monkeypatch) -> None:
+    monkeypatch.setenv("BAKERY_SERVICE", "drinks")
+    page = client.get("/board")
+    assert page.status_code == 200
+    assert "/static/board-ding.js" in page.text

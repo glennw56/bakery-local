@@ -1,6 +1,7 @@
 {% if orders %}
   {% for o in orders %}
   <article class="kds-ticket drink-{{ o.accent|lower|replace(' ', '-') }}"
+           data-order-id="{{ o.order_id }}"
            title="Tap when done"
            hx-delete="/board/orders/{{ o.order_id }}?minutes={{ minutes }}"
            hx-target="#ticket-list"
@@ -12,7 +13,7 @@
       {% if o.ticket_name %}<span class="kds-name">{{ o.ticket_name }}</span>{% endif %}
     </header>
     {% for t in o.drinks %}
-    <div class="kds-line">
+    <div class="kds-line" data-kds-line="{{ o.order_id }}|{{ loop.index0 }}|{{ t.drink_name }}|{{ t.qty }}">
       <h2>{{ t.drink_name }} <span class="kds-qty">×{{ t.qty }}</span></h2>
       {% if t.modifiers %}
       <ul class="kds-mods">
