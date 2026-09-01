@@ -370,15 +370,28 @@ def _phone_from_row(row: dict[str, Any]) -> str:
     return ""
 
 
+def _looks_like_member(row: dict[str, Any]) -> bool:
+    return _pick(row, _ID_KEYS + _PHONE_KEYS + _POINTS_KEYS + _CUSTOMER_KEYS) is not None
+
+
 def _rows_from_value(value: Any) -> list[dict[str, Any]] | None:
     value = _maybe_json(value)
     if isinstance(value, list):
         return [row for row in value if isinstance(row, dict)]
-    if isinstance(value, dict) and value:
-        vals = list(value.values())
-        if vals and all(isinstance(v, dict) for v in vals):
-            if not any(k in value for k in _ID_KEYS + _PHONE_KEYS + _POINTS_KEYS + _CUSTOMER_KEYS):
-                return [v for v in vals if isinstance(v, dict)]
+    if not isinstance(value, dict) or not value:
+        return None
+    vals = list(value.values())
+    map_of_dicts = bool(vals) and all(isinstance(v, dict) for v in vals)
+    if map_of_dicts and not _looks_like_member(value):
+        out: list[dict[str, Any]] = []
+        for key, row in value.items():
+            item = dict(row)
+            if _pick(item, _ID_KEYS + _CUSTOMER_KEYS) in (None, ""):
+                item["id"] = str(key)
+            out.append(item)
+        return out
+    if _looks_like_member(value):
+        return [value]
     return None
 
 
@@ -402,22 +415,30 @@ def _walk_blocks(payload: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _member_list_present(block: dict[str, Any]) -> bool:
+    for key in _MEMBER_LIST_KEYS:
+        got = _maybe_json(block.get(key))
+        if isinstance(got, (list, dict)) and got:
+            return True
+    loyalty = _maybe_json(block.get("loyalty"))
+    return isinstance(loyalty, list) and bool(loyalty)
+
+
 def _member_rows(payload: Any) -> list[dict[str, Any]]:
     """Glenn shape is loyalty.members; also accept top-level / data / accounts wraps."""
     root = _maybe_json(payload)
     if isinstance(root, list):
         return [row for row in root if isinstance(row, dict)]
     for block in _walk_blocks(root):
-        if block.get("gated") and not any(
-            isinstance(block.get(key), (list, dict, str)) and key in _MEMBER_LIST_KEYS for key in _MEMBER_LIST_KEYS
-        ):
+        if block.get("gated") and not _member_list_present(block):
             continue
         for key in _MEMBER_LIST_KEYS:
             rows = _rows_from_value(block.get(key))
             if rows:
                 return rows
-        if isinstance(block.get("loyalty"), list):
-            rows = _rows_from_value(block.get("loyalty"))
+        loyalty = _maybe_json(block.get("loyalty"))
+        if isinstance(loyalty, list):
+            rows = _rows_from_value(loyalty)
             if rows:
                 return rows
     return []
@@ -426,13 +447,11 @@ def _member_rows(payload: Any) -> list[dict[str, Any]]:
 def members_from_payload(payload: Any) -> list[LiveMember]:
     rows = _member_rows(payload)
     out: list[LiveMember] = []
-    for row in rows:
+    for index, row in enumerate(rows):
         mid = _pick(row, _ID_KEYS)
         if mid in (None, ""):
             mid = _pick(row, _CUSTOMER_KEYS)
-        mid_s = str(mid).strip() if mid not in (None, "") else ""
-        if not mid_s:
-            continue
+        mid_s = str(mid).strip() if mid not in (None, "") else f"row-{index}"
         phone = _phone_from_row(row)
         geo = lookup_phone(phone)
         cust = _pick(row, _CUSTOMER_KEYS)

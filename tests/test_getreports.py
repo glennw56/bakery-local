@@ -374,3 +374,44 @@ def test_alias_shape_loyalty_page_members_not_zero(monkeypatch) -> None:
     assert '<strong class="stat-value">0</strong>' not in after_members
     assert '<strong class="stat-value">2</strong>' in listed.text
     assert "LOY_FAKE_1" in listed.text or "(205) 555-0100" in listed.text
+
+
+def test_fixture_two_fake_members_never_zero() -> None:
+    payload = json.loads(LOYALTY.read_text(encoding="utf-8"))
+    rows = members_from_payload(payload)
+    assert payload["loyalty"]["count"] == 2
+    assert len(rows) == 2
+    assert len(rows) == payload["loyalty"]["count"]
+    phones = {m.phone for m in rows}
+    assert FAKE_PHONE_B in phones
+
+
+def test_json_string_and_customer_id_only_shapes() -> None:
+    nested = {
+        "loyalty": json.dumps(
+            {
+                "count": 2,
+                "members": [
+                    {"id": "LOY_FAKE_1", "points": 150, "phone": FAKE_PHONE_A},
+                    {"id": "LOY_FAKE_2", "points": 40, "phone": FAKE_PHONE_B},
+                ],
+            }
+        )
+    }
+    rows = members_from_payload(nested)
+    assert len(rows) == 2
+    assert {m.id for m in rows} == {"LOY_FAKE_1", "LOY_FAKE_2"}
+
+    camel = {
+        "count": 2,
+        "members": [
+            {"customerId": "CUST_FAKE_1", "points": 150, "phoneNumber": FAKE_PHONE_A},
+            {"customerId": "CUST_FAKE_2", "points": 40, "phoneNumber": FAKE_PHONE_B},
+        ],
+    }
+    rows = members_from_payload(camel)
+    assert len(rows) == camel["count"]
+    by_id = {m.id: m for m in rows}
+    assert by_id["CUST_FAKE_1"].phone == FAKE_PHONE_A
+    assert by_id["CUST_FAKE_2"].phone == FAKE_PHONE_B
+    assert by_id["CUST_FAKE_1"].points == 150
