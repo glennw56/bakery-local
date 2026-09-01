@@ -4,7 +4,7 @@
 
 Local-first shop notebook, reports desk, drink kitchen display, and loyalty member book. FastAPI + Jinja + HTMX + one SQLite file (`data/app.db`, WAL). No cloud, no Postgres.
 
-**Not in git:** Square tokens / API keys, private SSH keys, the live sqlite file, and the loyalty dump (`data/square_loyalty.json`). `data/*` is gitignored except `data/.gitkeep`. Copy `.env.example` to `.env` if you want local HOST/PORT; do not put Square keys there either.
+**Not in git:** Square tokens / API keys, private SSH keys, the live sqlite file, and the loyalty dump (`data/square_loyalty.json`). `data/*` is gitignored except `data/.gitkeep`. Copy `.env.example` to `.env` for HOST/PORT. On the shop laptop only, put `SQUARE_ACCESS_TOKEN` in `.env` (Payments Read + Orders Read). Never commit `.env`. Never paste the token in chat.
 
 ## Quick start
 
@@ -57,6 +57,25 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 4. Add to Home Screen if you want. Keep the tablet plugged in, brightness up, auto-lock off.
 
 `?minutes=15` is the default window. Newest tickets sit first. Tap a ticket when the drink is done and it drops off. The list refreshes every 10 seconds.
+
+
+## Live drink ingest (shop laptop)
+
+POS drinks show on `/board` only after they are **paid**. Unpaid open tickets never appear.
+
+The tablet does **not** call Square. It keeps polling `GET /board/tickets` every 10 seconds against local sqlite.
+
+On the shop laptop, with the board already serving (`make board` / `HOST=0.0.0.0 ./scripts/run.sh`):
+
+1. Put the production token in `.env` as `SQUARE_ACCESS_TOKEN` (not git).
+2. Pull once, or watch:
+
+   ```bash
+   make ingest
+   make ingest-watch
+   ```
+
+`ingest-watch` lists completed payments from the last 20 minutes, retrieves each order, writes drink lines to `drink_tickets`, and skips pastry / duplicates. Loop is ~25s on the laptop only. No webhook. No GCP.
 
 ## Loyalty + CSV + hometown
 

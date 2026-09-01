@@ -73,7 +73,11 @@ class MerchItem(Base):
 
 
 class DrinkTicket(Base):
-    """Kitchen drink tickets. ordered_at is naive UTC. modifiers_json is a JSON list."""
+    """Kitchen drink tickets. ordered_at is naive UTC. modifiers_json is a JSON list.
+
+    square_order_id + square_line_uid are optional Square keys for ingest
+    idempotency (ALTER-added on existing shop DBs).
+    """
 
     __tablename__ = "drink_tickets"
 
@@ -84,6 +88,18 @@ class DrinkTicket(Base):
     qty: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     ticket_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="local")
+    square_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    square_line_uid: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+
+
+class DrinkIngestSeen(Base):
+    """Durable Square order+line keys so tap-to-clear does not re-ingest."""
+
+    __tablename__ = "drink_ingest_seen"
+
+    square_order_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    square_line_uid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class LoyaltyMember(Base):

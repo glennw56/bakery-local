@@ -1,4 +1,4 @@
-.PHONY: setup run board test backup
+.PHONY: setup run board test backup ingest ingest-watch
 
 setup:
 	./scripts/setup.sh
@@ -14,3 +14,9 @@ test:
 
 backup:
 	./scripts/backup.sh
+
+ingest:
+	PYTHONPATH=. .venv/bin/python -m scripts.ingest_drinks
+
+ingest-watch:
+	PYTHONPATH=. .venv/bin/python -m scripts.ingest_drinks --watch

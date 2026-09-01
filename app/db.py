@@ -11,7 +11,7 @@ import os
 from collections.abc import Generator
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,9 +58,32 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def migrate_schema() -> None:
+    """Add Square ingest columns on an existing drink_tickets table (ALTER)."""
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+    if "drink_tickets" not in inspector.get_table_names():
+        return
+    cols = {c["name"] for c in inspector.get_columns("drink_tickets")}
+    with engine.begin() as conn:
+        if "square_order_id" not in cols:
+            conn.execute(text("ALTER TABLE drink_tickets ADD COLUMN square_order_id VARCHAR(64)"))
+        if "square_line_uid" not in cols:
+            conn.execute(text("ALTER TABLE drink_tickets ADD COLUMN square_line_uid VARCHAR(64)"))
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_drink_tickets_square_line "
+                "ON drink_tickets(square_order_id, square_line_uid) "
+                "WHERE square_order_id IS NOT NULL AND square_line_uid IS NOT NULL"
+            )
+        )
+
+
 def init_db() -> None:
     """Create tables if they do not exist. Called on app startup."""
     from app import models  # noqa: F401 — register mappers
 
     db_path().parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    migrate_schema()
