@@ -4,7 +4,7 @@
 
 Local-first shop notebook, reports desk, drink kitchen display, and loyalty member book. FastAPI + Jinja + HTMX + one SQLite file (`data/app.db`, WAL). No cloud, no Postgres.
 
-**Not in git:** Square tokens / API keys, private SSH keys, the live sqlite file, and the loyalty dump (`data/square_loyalty.json`). `data/*` is gitignored except `data/.gitkeep`. Copy `.env.example` to `.env` for HOST/PORT. On the shop laptop only, put `SQUARE_ACCESS_TOKEN` in `.env` (Payments Read + Orders Read). Never commit `.env`. Never paste the token in chat.
+**Not in git:** Square tokens / API keys, private SSH keys, the live sqlite file, and the loyalty dump (`data/square_loyalty.json`). `data/*` is gitignored except `data/.gitkeep`. Copy `.env.example` to `.env` if you want local HOST/PORT; laptop `.env` holds `SQUARE_ACCESS_TOKEN`, never git.
 
 ## Quick start
 
@@ -59,23 +59,13 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 `?minutes=15` is the default window. Newest tickets sit first. Tap a ticket when the drink is done and it drops off. The list refreshes every 10 seconds.
 
 
-## Live drink ingest (shop laptop)
+## Live drink ingest
 
-POS drinks show on `/board` only after they are **paid**. Unpaid open tickets never appear.
+Paid Square drinks land in `drink_tickets` on the shop laptop. POS does not fire `order.created` webhooks — this process lists COMPLETED payments then retrieves each order. Unpaid drinks never appear.
 
-The tablet does **not** call Square. It keeps polling `GET /board/tickets` every 10 seconds against local sqlite.
+Run `make ingest` or `./.venv/bin/python -m scripts.ingest_drinks --watch` on the laptop WHILE the board is serving. Tablet still only hits `/board`. No webhook. No GCP.
 
-On the shop laptop, with the board already serving (`make board` / `HOST=0.0.0.0 ./scripts/run.sh`):
-
-1. Put the production token in `.env` as `SQUARE_ACCESS_TOKEN` (not git).
-2. Pull once, or watch:
-
-   ```bash
-   make ingest
-   make ingest-watch
-   ```
-
-`ingest-watch` lists completed payments from the last 20 minutes, retrieves each order, writes drink lines to `drink_tickets`, and skips pastry / duplicates. Loop is ~25s on the laptop only. No webhook. No GCP.
+`make ingest-watch` loops every 25s. Tokens stay in laptop `.env`, never git. The HTMX 10s poll still reads local sqlite only.
 
 ## Loyalty + CSV + hometown
 
@@ -128,7 +118,7 @@ PYTHONPATH=. .venv/bin/python -m scripts.import_loyalty data/square_loyalty.json
 
 Shape: `{ "program": { "id", "accrual", "rewards" }, "members": [ { "loyalty_id", "customer_id", "phone", "points", "lifetime_points", "enrolled_at", "area_code", "area_metro", "area_state", "area_region", "events": [...] } ] }`. Names/email are optional. Safe to re-run (upsert by `square_loyalty_id`).
 
-Drink tickets (until a live Square pull exists):
+Drink tickets JSON (fallback if ingest is not running):
 
 ```bash
 PYTHONPATH=. .venv/bin/python -m scripts.import_drinks_json scripts/sample_tickets.json
@@ -154,7 +144,7 @@ Shape (object with `tickets`, or a bare array). `ordered_at` is ISO-8601; a miss
 }
 ```
 
-A later Square import can land in the same `drink_tickets` / `sales_*` tables. Do not put Square API tokens in this repo.
+Live paid drinks land in the same `drink_tickets` table via `make ingest` on the shop laptop (see above). JSON import is the offline fallback. Do not put Square API tokens in this repo.
 
 ## Spring Boot + Angular map
 

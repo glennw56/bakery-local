@@ -76,10 +76,17 @@ class DrinkTicket(Base):
     """Kitchen drink tickets. ordered_at is naive UTC. modifiers_json is a JSON list.
 
     square_order_id + square_line_uid are optional Square keys for ingest
-    idempotency (ALTER-added on existing shop DBs).
+    idempotency (ALTER-added on existing shop DBs). Unique when both are set.
     """
 
     __tablename__ = "drink_tickets"
+    __table_args__ = (
+        UniqueConstraint(
+            "square_order_id",
+            "square_line_uid",
+            name="uq_drink_tickets_square_line",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ordered_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -90,16 +97,6 @@ class DrinkTicket(Base):
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="local")
     square_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     square_line_uid: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
-
-
-class DrinkIngestSeen(Base):
-    """Durable Square order+line keys so tap-to-clear does not re-ingest."""
-
-    __tablename__ = "drink_ingest_seen"
-
-    square_order_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    square_line_uid: Mapped[str] = mapped_column(String(64), primary_key=True)
-    ingested_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class LoyaltyMember(Base):

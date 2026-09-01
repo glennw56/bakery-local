@@ -58,15 +58,13 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def migrate_schema() -> None:
-    """Add Square ingest columns on an existing drink_tickets table (ALTER)."""
-    from sqlalchemy import inspect
-
-    inspector = inspect(engine)
-    if "drink_tickets" not in inspector.get_table_names():
-        return
-    cols = {c["name"] for c in inspector.get_columns("drink_tickets")}
+def _migrate_drink_tickets() -> None:
+    """ALTER-add Square line keys on existing drink_tickets; unique when both set."""
     with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(drink_tickets)")).fetchall()
+        cols = {row[1] for row in rows}
+        if not cols:
+            return
         if "square_order_id" not in cols:
             conn.execute(text("ALTER TABLE drink_tickets ADD COLUMN square_order_id VARCHAR(64)"))
         if "square_line_uid" not in cols:
@@ -80,10 +78,26 @@ def migrate_schema() -> None:
         )
 
 
+def _seed_weekend_if_empty() -> None:
+    """Load sample weekend days when weekend_days is empty (existing shop DBs).
+
+    setup.sh / seed_demo only run when the db file is missing, so laptops that
+    already have data/app.db never got weekend_days. Same load_if_empty path as
+    seed_demo. Idempotent: skip if rows exist. Does not touch reports, loyalty,
+    or tickets.
+    """
+    from scripts.load_weekend import load_if_empty
+
+    with SessionLocal() as db:
+        load_if_empty(db)
+        db.commit()
+
+
 def init_db() -> None:
     """Create tables if they do not exist. Called on app startup."""
     from app import models  # noqa: F401 — register mappers
 
     db_path().parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
-    migrate_schema()
+    _migrate_drink_tickets()
+    _seed_weekend_if_empty()
