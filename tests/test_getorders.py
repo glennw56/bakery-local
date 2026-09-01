@@ -43,3 +43,43 @@ def test_live_views_unset_returns_none(monkeypatch) -> None:
 
     monkeypatch.delenv("GETORDERS_URL", raising=False)
     assert getorders.live_ticket_views(180) is None
+
+
+
+def test_groups_two_drinks_one_order() -> None:
+    payload = [
+        [
+            "2026-09-01T18:50:44.246Z",
+            "ORDER_GROUP_1",
+            ["1 Matcha Latte ", "Matcha Option Strawberry Matcha"],
+            ["1 Vietnamese Coffee ", "Sweet Level 25%"],
+        ]
+    ]
+    from app.getorders import live_order_views
+
+    orders = live_order_views(24 * 60, payload=payload)
+    assert orders is not None
+    assert len(orders) == 1
+    assert orders[0]["order_id"] == "ORDER_GROUP_1"
+    names = [d["drink_name"] for d in orders[0]["drinks"]]
+    assert names == ["Matcha Latte", "Vietnamese Coffee"]
+
+
+def test_cleared_order_hidden() -> None:
+    payload = [
+        [
+            "2026-09-01T18:50:44.246Z",
+            "ORDER_GROUP_1",
+            ["1 Matcha Latte ", "Matcha Option Strawberry Matcha"],
+        ],
+        [
+            "2026-09-01T18:12:19.110Z",
+            "ORDER_GROUP_2",
+            ["1 Vietnamese Coffee ", "Sweet Level 25%"],
+        ],
+    ]
+    from app.getorders import live_order_views
+
+    orders = live_order_views(24 * 60, payload=payload, cleared=["ORDER_GROUP_1"])
+    assert orders is not None
+    assert [o["order_id"] for o in orders] == ["ORDER_GROUP_2"]

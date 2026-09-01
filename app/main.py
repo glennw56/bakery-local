@@ -242,6 +242,7 @@ def ticket_views(rows: list[DrinkTicket]) -> list[dict]:
                 "modifiers": parse_modifiers(row.modifiers_json),
                 "clock": chicago_clock(row.ordered_at),
                 "age_min": age,
+                "square_order_id": row.square_order_id,
             }
         )
     return views
@@ -258,6 +259,46 @@ def default_board_minutes() -> int:
         return 180
     return 15
 
+
+
+CLEARED_COOKIE = "kds_cleared"
+CLEARED_MAX = 80
+
+
+def parse_cleared(request: Request) -> list[str]:
+    raw = request.cookies.get(CLEARED_COOKIE) or ""
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in raw.split(","):
+        oid = part.strip()
+        if not oid or oid in seen:
+            continue
+        seen.add(oid)
+        out.append(oid)
+        if len(out) >= CLEARED_MAX:
+            break
+    return out
+
+
+def remember_cleared(response: Response, order_ids: list[str]) -> None:
+    ids = [x for x in order_ids if x][:CLEARED_MAX]
+    response.set_cookie(
+        CLEARED_COOKIE,
+        ",".join(ids),
+        max_age=180 * 60,
+        path="/board",
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def board_orders(request: Request, db: Session, minutes: int) -> list[dict]:
+    from app.getorders import group_order_views, live_order_views
+
+    live = live_order_views(minutes, cleared=parse_cleared(request))
+    if live is not None:
+        return live
+    return group_order_views(ticket_views(tickets_in_window(db, minutes)))
 
 def tickets_in_window(db: Session, minutes: int) -> list[DrinkTicket]:
     # Newest first. Tap-to-clear deletes the row (see board_ticket_done).
@@ -426,16 +467,12 @@ def board_page(
     db: Session = Depends(get_db),
 ):
     minutes = clamp_minutes(default_board_minutes() if minutes is None else minutes)
-    from app.getorders import live_ticket_views
-
-    live = live_ticket_views(minutes)
-    tickets = live if live is not None else ticket_views(tickets_in_window(db, minutes))
     return templates.TemplateResponse(
         request,
         "board/index.html",
         {
             "minutes": minutes,
-            "tickets": tickets,
+            "orders": board_orders(request, db, minutes),
         },
     )
 
@@ -447,18 +484,58 @@ def board_tickets(
     db: Session = Depends(get_db),
 ):
     minutes = clamp_minutes(default_board_minutes() if minutes is None else minutes)
-    from app.getorders import live_ticket_views
-
-    live = live_ticket_views(minutes)
-    tickets = live if live is not None else ticket_views(tickets_in_window(db, minutes))
     return templates.TemplateResponse(
         request,
         "board/_tickets.html",
         {
             "minutes": minutes,
-            "tickets": tickets,
+            "orders": board_orders(request, db, minutes),
         },
     )
+
+
+
+@app.delete("/board/orders/{order_id}", response_class=HTMLResponse)
+def board_order_done(
+    order_id: str,
+    request: Request,
+    minutes: int = Query(15),
+    db: Session = Depends(get_db),
+):
+    """Tap an order on the board: hide it. Live getorders uses a tablet cookie, not a ticket DB."""
+    minutes = clamp_minutes(minutes)
+    oid = (order_id or "").strip()
+    if (os.environ.get("GETORDERS_URL") or "").strip():
+        cleared = parse_cleared(request)
+        if oid and oid not in cleared:
+            cleared.append(oid)
+        from app.getorders import live_order_views
+
+        orders = live_order_views(minutes, cleared=cleared) or []
+        response = templates.TemplateResponse(
+            request,
+            "board/_tickets.html",
+            {"minutes": minutes, "orders": orders},
+        )
+        remember_cleared(response, cleared)
+        return response
+    if oid.isdigit():
+        ticket = db.get(DrinkTicket, int(oid))
+        if ticket is not None:
+            db.delete(ticket)
+            db.commit()
+    elif oid:
+        rows = db.scalars(select(DrinkTicket).where(DrinkTicket.square_order_id == oid)).all()
+        for ticket in rows:
+            db.delete(ticket)
+        db.commit()
+    if _is_htmx(request):
+        return templates.TemplateResponse(
+            request,
+            "board/_tickets.html",
+            {"minutes": minutes, "orders": board_orders(request, db, minutes)},
+        )
+    return RedirectResponse(f"/board?minutes={minutes}", status_code=303)
 
 
 @app.delete("/board/tickets/{ticket_id}", response_class=HTMLResponse)
@@ -475,11 +552,10 @@ def board_ticket_done(
         db.delete(ticket)
         db.commit()
     if _is_htmx(request):
-        rows = tickets_in_window(db, minutes)
         return templates.TemplateResponse(
             request,
             "board/_tickets.html",
-            {"minutes": minutes, "tickets": ticket_views(rows)},
+            {"minutes": minutes, "orders": board_orders(request, db, minutes)},
         )
     return RedirectResponse(f"/board?minutes={minutes}", status_code=303)
 
@@ -505,11 +581,10 @@ def board_demo_tick(
     )
     db.commit()
     if _is_htmx(request):
-        rows = tickets_in_window(db, minutes)
         return templates.TemplateResponse(
             request,
             "board/_tickets.html",
-            {"minutes": minutes, "tickets": ticket_views(rows)},
+            {"minutes": minutes, "orders": board_orders(request, db, minutes)},
         )
     return RedirectResponse(f"/board?minutes={minutes}", status_code=303)
 

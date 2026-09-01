@@ -3,13 +3,12 @@
 Public drinks board fetches this on every refresh when GETORDERS_URL is set.
 Laptop Square ingest is unchanged when GETORDERS_URL is unset.
 """
-
 from __future__ import annotations
 
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -111,6 +110,7 @@ def live_ticket_views(minutes: int, payload: Any | None = None) -> list[dict] | 
                 "modifiers": row["modifiers"],
                 "clock": aware.astimezone(CHICAGO).strftime("%-I:%M %p"),
                 "age_min": age,
+                "square_order_id": row["square_order_id"],
                 "ordered_at": ordered,
             }
         )
@@ -118,3 +118,49 @@ def live_ticket_views(minutes: int, payload: Any | None = None) -> list[dict] | 
     for v in views:
         v.pop("ordered_at", None)
     return views
+
+
+def group_order_views(tickets: list[dict]) -> list[dict]:
+    """One KDS card per Square order. Newest order first."""
+    orders: list[dict] = []
+    index: dict[str, dict] = {}
+    for t in tickets:
+        oid = str(t.get("square_order_id") or t.get("id") or "").strip()
+        if not oid:
+            oid = f"anon-{len(orders)}"
+        if oid not in index:
+            order = {
+                "order_id": oid,
+                "clock": t.get("clock") or "",
+                "age_min": t.get("age_min") or 0,
+                "ticket_name": t.get("ticket_name") or "",
+                "accent": t.get("drink_name") or "",
+                "drinks": [],
+            }
+            index[oid] = order
+            orders.append(order)
+        order = index[oid]
+        if t.get("ticket_name") and not order["ticket_name"]:
+            order["ticket_name"] = t["ticket_name"]
+        order["drinks"].append(
+            {
+                "drink_name": t.get("drink_name") or "",
+                "qty": t.get("qty") or 1,
+                "modifiers": t.get("modifiers") or [],
+            }
+        )
+    return orders
+
+
+def live_order_views(
+    minutes: int,
+    payload: Any | None = None,
+    cleared: Iterable[str] | None = None,
+) -> list[dict] | None:
+    tickets = live_ticket_views(minutes, payload=payload)
+    if tickets is None:
+        return None
+    skip = {str(x).strip() for x in (cleared or []) if str(x).strip()}
+    if skip:
+        tickets = [t for t in tickets if str(t.get("square_order_id") or "") not in skip]
+    return group_order_views(tickets)

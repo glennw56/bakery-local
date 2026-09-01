@@ -267,6 +267,15 @@ body.kds {
 .kds-ticket.drink-milk-tea { border-left-color: #8b5a2b; }
 .kds-ticket.drink-matcha { border-left-color: #3d9b5b; }
 .kds-ticket.drink-biscoff { border-left-color: #d4a017; }
+.kds-ticket.drink-matcha-latte { border-left-color: #3d9b5b; }
+.kds-ticket.drink-vietnamese-coffee { border-left-color: #c47a2c; }
+.kds-ticket.drink-coffee { border-left-color: #6b4a2b; }
+.kds-line + .kds-line {
+  margin-top: 0.55rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid #2a313c;
+}
+.kds-line h2 .kds-qty { margin-left: 0.45rem; }
 .kds-ticket-head {
   display: flex;
   align-items: baseline;

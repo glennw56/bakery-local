@@ -70,7 +70,7 @@ def test_board_newest_first_and_click_clears() -> None:
     seed_main()
     page = client.get("/board")
     assert page.status_code == 200
-    assert "newest first" in page.text
+    assert "grouped by order" in page.text
     assert "hx-delete=" in page.text
 
     # Newest seed ticket is Milk Tea / Table 3 (1 min ago). It should appear
@@ -82,15 +82,15 @@ def test_board_newest_first_and_click_clears() -> None:
 
     import re
 
-    ids = re.findall(r'hx-delete="/board/tickets/(\d+)', page.text)
+    ids = re.findall(r'hx-delete="/board/orders/([^"?]+)', page.text)
     assert ids
     first_id = ids[0]
-    gone = client.delete(f"/board/tickets/{first_id}", headers={"HX-Request": "true"})
+    gone = client.delete(f"/board/orders/{first_id}", headers={"HX-Request": "true"})
     assert gone.status_code == 200
-    assert f"/board/tickets/{first_id}" not in gone.text
+    assert f"/board/orders/{first_id}" not in gone.text
     remaining = client.get("/board")
     assert remaining.status_code == 200
-    assert f"/board/tickets/{first_id}" not in remaining.text
+    assert f"/board/orders/{first_id}" not in remaining.text
 
 
 def test_loyalty_ok() -> None:
