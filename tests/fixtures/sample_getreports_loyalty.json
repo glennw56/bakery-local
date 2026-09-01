@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "as_of": "2026-09-01T21:32:14Z",
+  "timezone": "America/Chicago",
+  "sales": {
+    "today": {"tickets": 21, "cents": 46732, "dollars": 467.32, "channels": {}, "top_items": []},
+    "week": {"tickets": 46, "cents": 109954, "dollars": 1099.54, "channels": {}, "top_items": []}
+  },
+  "loyalty": {
+    "count": 2,
+    "members": [
+      {"id": "LOY_FAKE_1", "points": 150, "phone": "+15555550100", "customer_id": "CUST_FAKE_1"},
+      {"id": "LOY_FAKE_2", "points": 40, "phone": "+12055550101", "customer_id": "CUST_FAKE_2"}
+    ]
+  }
+}

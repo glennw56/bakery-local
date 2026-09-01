@@ -1,0 +1,419 @@
+"""Live getreports → desk reports / weekend / loyalty views. No sqlite upsert.
+
+Desk fetches this on every refresh when GETREPORTS_URL is set.
+Laptop sqlite is unchanged when GETREPORTS_URL is unset.
+Loyalty phones stay on desk (never allUsers). /loyalty on getreports is gated.
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from typing import Any
+from zoneinfo import ZoneInfo
+
+import httpx
+
+from app.area_codes import lookup_phone
+from app.drinks import is_drink
+from app.weekend import DRINK_MIX_ORDER, MANGO_NAME, VIET_NAME, _pct, pair_sentence
+
+CHICAGO = ZoneInfo("America/Chicago")
+
+
+def fetch_payload(suffix: str = "", payload: Any | None = None) -> Any | None:
+    """None when GETREPORTS_URL is unset (use sqlite). {} on live fetch error."""
+    if payload is not None:
+        return payload
+    url = (os.environ.get("GETREPORTS_URL") or "").strip()
+    if not url:
+        return None
+    target = url.rstrip("/") + (suffix or "")
+    headers: dict[str, str] = {}
+    key = (os.environ.get("INGEST_KEY") or "").strip()
+    if key and "/loyalty" in (suffix or ""):
+        headers["X-Ingest-Key"] = key
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.get(target, headers=headers)
+            response.raise_for_status()
+            return response.json()
+    except Exception:
+        return {}
+
+
+def _as_of_chicago(payload: dict) -> datetime:
+    raw = str(payload.get("as_of") or "").strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        dt = datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(CHICAGO)
+
+
+def _rollup(block: Any) -> dict[str, Any]:
+    if not isinstance(block, dict):
+        block = {}
+    try:
+        tickets = int(block.get("tickets") or 0)
+    except (TypeError, ValueError):
+        tickets = 0
+    try:
+        cents = int(block.get("cents") or 0)
+    except (TypeError, ValueError):
+        cents = 0
+    channels = block.get("channels") if isinstance(block.get("channels"), dict) else {}
+    top = block.get("top_items") if isinstance(block.get("top_items"), list) else []
+    items: list[tuple[str, int, int]] = []
+    for row in top:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        if not name:
+            continue
+        try:
+            qty = int(row.get("qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        try:
+            item_cents = int(row.get("cents") or 0)
+        except (TypeError, ValueError):
+            item_cents = 0
+        items.append((name, qty, item_cents))
+    return {"tickets": tickets, "cents": cents, "channels": channels, "top_items": items}
+
+
+def _qty_map(items: list[tuple[str, int, int]]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for name, qty, _cents in items:
+        out[name] = out.get(name, 0) + qty
+    return out
+
+
+def _named_qty(mapping: dict[str, int], name: str) -> int:
+    if name in mapping:
+        return mapping[name]
+    needle = name.casefold()
+    for key, qty in mapping.items():
+        if key.casefold() == needle:
+            return qty
+    return 0
+
+
+def _split_pastry_drink(items: list[tuple[str, int, int]]) -> tuple[int, int, int, int]:
+    pastry_qty = pastry_cents = drink_qty = drink_cents = 0
+    for name, qty, cents in items:
+        if is_drink(name):
+            drink_qty += qty
+            drink_cents += cents
+        else:
+            pastry_qty += qty
+            pastry_cents += cents
+    return pastry_qty, pastry_cents, drink_qty, drink_cents
+
+
+@dataclass
+class LiveSummary:
+    sold_on: date
+    tickets: int = 0
+    cents: int = 0
+    note: str = ""
+
+
+def reports_from_payload(payload: Any) -> dict[str, Any]:
+    """Template vars for /reports. No drink-modifier matrix; getreports does not send one."""
+    data = payload if isinstance(payload, dict) else {}
+    sales = data.get("sales") if isinstance(data.get("sales"), dict) else {}
+    today = _rollup(sales.get("today"))
+    week = _rollup(sales.get("week"))
+    as_of = _as_of_chicago(data)
+    today_on = as_of.date()
+    week_on = (as_of - timedelta(days=as_of.weekday())).date()
+    summaries = [
+        LiveSummary(sold_on=today_on, tickets=today["tickets"], cents=today["cents"], note="Today"),
+        LiveSummary(sold_on=week_on, tickets=week["tickets"], cents=week["cents"], note="Week to date"),
+    ]
+    if today_on.weekday() >= 5:
+        weekend_tickets, weekend_cents = today["tickets"], today["cents"]
+        weekday_tickets = weekday_cents = 0
+    else:
+        weekday_tickets, weekday_cents = today["tickets"], today["cents"]
+        weekend_tickets = weekend_cents = 0
+    top_items = week["top_items"] or today["top_items"]
+    return {
+        "summaries": summaries,
+        "weekend_tickets": weekend_tickets,
+        "weekend_cents": weekend_cents,
+        "weekday_tickets": weekday_tickets,
+        "weekday_cents": weekday_cents,
+        "top_items": top_items,
+        "modifiers_by_drink": {},
+        "merch": [],
+        "today_tickets": today["tickets"],
+        "today_cents": today["cents"],
+        "as_of": as_of,
+    }
+
+
+def scorecard_from_payload(payload: Any) -> dict[str, Any]:
+    """Same keys as weekend.scorecard. Today vs week-to-date (getreports has no Saturday pair)."""
+    data = payload if isinstance(payload, dict) else {}
+    sales = data.get("sales") if isinstance(data.get("sales"), dict) else {}
+    today = _rollup(sales.get("today"))
+    week = _rollup(sales.get("week"))
+    as_of = _as_of_chicago(data)
+    this_on = as_of.date()
+    last_on = (as_of - timedelta(days=as_of.weekday())).date()
+    t_pastry_q, t_pastry_c, t_drink_q, t_drink_c = _split_pastry_drink(today["top_items"])
+    l_pastry_q, l_pastry_c, l_drink_q, l_drink_c = _split_pastry_drink(week["top_items"])
+    this_tot = {
+        "tickets": today["tickets"],
+        "cents": today["cents"],
+        "pastry_qty": t_pastry_q,
+        "pastry_cents": t_pastry_c,
+        "drink_qty": t_drink_q,
+        "drink_cents": t_drink_c,
+        "boba_modifiers": 0,
+    }
+    last_tot = {
+        "tickets": week["tickets"],
+        "cents": week["cents"],
+        "pastry_qty": l_pastry_q,
+        "pastry_cents": l_pastry_c,
+        "drink_qty": l_drink_q,
+        "drink_cents": l_drink_c,
+        "boba_modifiers": 0,
+    }
+    this_drinks = {n: q for n, q, _c in today["top_items"] if is_drink(n)}
+    last_drinks = {n: q for n, q, _c in week["top_items"] if is_drink(n)}
+    extras = sorted(
+        {*(this_drinks.keys()), *(last_drinks.keys())} - set(DRINK_MIX_ORDER),
+        key=str.casefold,
+    )
+    drink_mix = []
+    for name in list(DRINK_MIX_ORDER) + extras:
+        this_n = _named_qty(this_drinks, name)
+        last_n = _named_qty(last_drinks, name)
+        drink_mix.append({"name": name, "last": last_n, "this": this_n, "delta": this_n - last_n})
+    last_top_map = _qty_map(week["top_items"])
+    top = []
+    for rank, (name, qty, _cents) in enumerate(today["top_items"][:10], start=1):
+        last_n = _named_qty(last_top_map, name)
+        top.append({"rank": rank, "name": name, "last": last_n, "this": qty, "delta": qty - last_n})
+    this_viet = _named_qty(this_drinks, VIET_NAME)
+    last_viet = _named_qty(last_drinks, VIET_NAME)
+    this_mango = _named_qty(_qty_map(today["top_items"]), MANGO_NAME)
+    last_mango = _named_qty(last_top_map, MANGO_NAME)
+    empty = today["tickets"] == 0 and week["tickets"] == 0 and not today["top_items"] and not week["top_items"]
+    return {
+        "empty": empty,
+        "this_on": this_on,
+        "last_on": last_on,
+        "this_label": f"Today, {this_on.strftime('%b')} {this_on.day}, {this_on.year}",
+        "last_label": f"Week to date from {last_on.strftime('%b')} {last_on.day}, {last_on.year}",
+        "this_iso": this_on.isoformat(),
+        "last_iso": last_on.isoformat(),
+        "this": this_tot,
+        "last": last_tot,
+        "tickets_delta": this_tot["tickets"] - last_tot["tickets"],
+        "tickets_pct": _pct(this_tot["tickets"], last_tot["tickets"]),
+        "cents_delta": this_tot["cents"] - last_tot["cents"],
+        "cents_pct": _pct(this_tot["cents"], last_tot["cents"]),
+        "pastry_qty_delta": this_tot["pastry_qty"] - last_tot["pastry_qty"],
+        "pastry_cents_delta": this_tot["pastry_cents"] - last_tot["pastry_cents"],
+        "drink_qty_delta": this_tot["drink_qty"] - last_tot["drink_qty"],
+        "drink_cents_delta": this_tot["drink_cents"] - last_tot["drink_cents"],
+        "boba_delta": 0,
+        "drink_mix": drink_mix,
+        "top": top,
+        "pair_sentence": pair_sentence(this_viet, this_mango, last_viet, last_mango, this_on),
+        "csv_qs": "",
+    }
+
+
+@dataclass
+class LiveMember:
+    """Duck-types LoyaltyMember for member_view / stats / CSV. Not persisted."""
+
+    id: str
+    square_loyalty_id: str = ""
+    square_customer_id: str = ""
+    given_name: str = ""
+    family_name: str = ""
+    phone: str = ""
+    email: str = ""
+    points: int = 0
+    lifetime_points: int = 0
+    enrolled_at: datetime | None = None
+    updated_at: datetime | None = None
+    visits: int = 0
+    last_visit_at: datetime | None = None
+    first_visit_at: datetime | None = None
+    lifetime_cents: int = 0
+    favorite_item: str = ""
+    favorite_drink: str = ""
+    favorite_modifier: str = ""
+    zip_code: str = ""
+    creation_source: str = "getreports"
+    email_unsubscribed: int = 0
+    segments_json: str = "[]"
+    notes: str = ""
+    status: str = "active"
+    area_code: str = ""
+    area_metro: str = ""
+    area_state: str = ""
+    area_region: str = "unknown"
+
+
+def members_from_payload(payload: Any) -> list[LiveMember]:
+    data = payload if isinstance(payload, dict) else {}
+    block = data.get("loyalty")
+    if block is None and isinstance(data.get("members"), list):
+        block = data
+    if not isinstance(block, dict):
+        return []
+    if block.get("gated"):
+        return []
+    rows = block.get("members")
+    if not isinstance(rows, list):
+        return []
+    out: list[LiveMember] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        mid = str(row.get("id") or "").strip()
+        if not mid:
+            continue
+        try:
+            pts = int(row.get("points") or 0)
+        except (TypeError, ValueError):
+            pts = 0
+        phone = str(row.get("phone") or "").strip()
+        geo = lookup_phone(phone)
+        out.append(
+            LiveMember(
+                id=mid,
+                square_loyalty_id=mid,
+                square_customer_id=str(row.get("customer_id") or "").strip(),
+                phone=phone,
+                points=pts,
+                lifetime_points=pts,
+                area_code=geo["area_code"],
+                area_metro=geo["area_metro"],
+                area_state=geo["area_state"],
+                area_region=geo["area_region"],
+            )
+        )
+    return out
+
+
+def filter_members(
+    members: list[LiveMember],
+    q: str = "",
+    segment: str = "all",
+    sort: str = "points",
+    direction: str = "desc",
+    now: datetime | None = None,
+) -> list[LiveMember]:
+    from app.loyalty import compute_status, days_since, display_name, utc_now
+
+    now = now or utc_now()
+    term = (q or "").strip().casefold()
+    rows = list(members)
+    if term:
+        matched: list[LiveMember] = []
+        for m in rows:
+            blob = " ".join(
+                [
+                    display_name(m),
+                    m.phone or "",
+                    m.email or "",
+                    str(m.id),
+                ]
+            ).casefold()
+            if term in blob:
+                matched.append(m)
+        rows = matched
+    segment = (segment or "all").strip().lower()
+    if segment not in ("", "all"):
+        kept: list[LiveMember] = []
+        for m in rows:
+            status = compute_status(m, now)
+            last_days = days_since(m.last_visit_at, now)
+            has_email = bool((m.email or "").strip())
+            has_phone = bool((m.phone or "").strip())
+            ok = False
+            if segment == "active":
+                ok = m.last_visit_at is not None and (last_days or 0) <= 30
+            elif segment == "lapsed":
+                ok = status == "lapsed"
+            elif segment == "high":
+                ok = int(m.points or 0) >= 100
+            elif segment == "never":
+                ok = status == "never_purchased"
+            elif segment == "email":
+                ok = has_email
+            elif segment == "phone":
+                ok = has_phone and not has_email
+            elif segment == "local":
+                ok = m.area_region == "local"
+            elif segment == "alabama":
+                ok = m.area_region == "alabama"
+            elif segment in ("out_of_state", "out"):
+                ok = m.area_region == "out_of_state"
+            elif segment in ("unknown", "unknown_phone"):
+                ok = m.area_region == "unknown"
+            if ok:
+                kept.append(m)
+        rows = kept
+    sort = (sort or "points").strip().lower()
+    descending = (direction or "desc").strip().lower() != "asc"
+
+    def key(m: LiveMember):
+        if sort == "lifetime":
+            return (int(m.lifetime_points or 0), str(m.id))
+        if sort == "last_visit":
+            return (m.last_visit_at or datetime.min, str(m.id))
+        if sort == "spend":
+            return (int(m.lifetime_cents or 0), str(m.id))
+        if sort == "name":
+            return ((m.family_name or "").casefold(), (m.given_name or "").casefold(), str(m.id))
+        if sort == "enrolled":
+            return (m.enrolled_at or datetime.min, str(m.id))
+        return (int(m.points or 0), str(m.id))
+
+    rows.sort(key=key, reverse=descending)
+    return rows
+
+
+def live_reports_context(payload: Any | None = None) -> dict[str, Any] | None:
+    raw = fetch_payload(payload=payload)
+    if raw is None:
+        return None
+    return reports_from_payload(raw)
+
+
+def live_scorecard(payload: Any | None = None) -> dict[str, Any] | None:
+    raw = fetch_payload(payload=payload)
+    if raw is None:
+        return None
+    return scorecard_from_payload(raw)
+
+
+def live_members(payload: Any | None = None) -> list[LiveMember] | None:
+    """Parse-and-render. None when URL unset. [] when gated, no INGEST_KEY, 401, or fetch error."""
+    if payload is not None:
+        return members_from_payload(payload)
+    url = (os.environ.get("GETREPORTS_URL") or "").strip()
+    if not url:
+        return None
+    if not (os.environ.get("INGEST_KEY") or "").strip():
+        return []
+    raw = fetch_payload(suffix="/loyalty")
+    if raw is None:
+        return None
+    return members_from_payload(raw)

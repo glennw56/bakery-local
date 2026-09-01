@@ -31,6 +31,7 @@ from app.db import get_db, init_db
 from app.models import DrinkModifier, DrinkTicket, LoyaltyMember, MerchItem, Note, SalesDaily, SalesSummary
 from app import loyalty as loyalty_svc
 from app import weekend as weekend_svc
+from app import getreports as getreports_svc
 
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = ROOT / "templates"
@@ -330,6 +331,23 @@ templates.env.filters["chicago_date"] = loyalty_svc.chicago_date
 def dashboard(request: Request, db: Session = Depends(get_db)):
     if bakery_service() == "drinks":
         return RedirectResponse("/board", status_code=302)
+    live = getreports_svc.live_reports_context()
+    if live is not None:
+        live_members = getreports_svc.live_members() or []
+        top_name = live["top_items"][0][0] if live["top_items"] else ""
+        as_of = live.get("as_of")
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {
+                "ticket_count": int(live.get("today_tickets") or 0),
+                "drink_count": 0,
+                "top_drink": top_name,
+                "last_order": as_of.strftime("%-I:%M %p") if as_of else "",
+                "last_order_empty": as_of is None,
+                "loyalty_count": len(live_members),
+            },
+        )
     ticket_count = db.scalar(select(func.count(DrinkTicket.id))) or 0
     drink_count = db.scalar(select(func.coalesce(func.sum(DrinkTicket.qty), 0))) or 0
     top_row = db.execute(
@@ -392,6 +410,10 @@ def notes_delete(note_id: int, request: Request, db: Session = Depends(get_db)):
 
 @app.get("/reports", response_class=HTMLResponse)
 def reports_index(request: Request, db: Session = Depends(get_db)):
+    live = getreports_svc.live_reports_context()
+    if live is not None:
+        return templates.TemplateResponse(request, "reports/index.html", live)
+
     summaries = db.scalars(select(SalesSummary).order_by(SalesSummary.sold_on.desc())).all()
 
     weekend_tickets = weekend_cents = weekday_tickets = weekday_cents = 0
@@ -448,7 +470,14 @@ def weekend_index(
     this: str = Query(""),
     db: Session = Depends(get_db),
 ):
-    """Marketing scorecard: this Saturday vs last. No live Square."""
+    """Marketing scorecard: this Saturday vs last. Live getreports when GETREPORTS_URL is set."""
+    live = getreports_svc.live_scorecard()
+    if live is not None:
+        return templates.TemplateResponse(
+            request,
+            "weekend/index.html",
+            {"card": live, "merch": []},
+        )
     card = weekend_svc.scorecard(db, this)
     merch = db.scalars(select(MerchItem).order_by(MerchItem.id)).all()
     return templates.TemplateResponse(
@@ -460,7 +489,8 @@ def weekend_index(
 
 @app.get("/weekend.csv")
 def weekend_csv(this: str = Query(""), db: Session = Depends(get_db)):
-    card = weekend_svc.scorecard(db, this)
+    live = getreports_svc.live_scorecard()
+    card = live if live is not None else weekend_svc.scorecard(db, this)
     payload = weekend_svc.csv_bytes(card)
     headers = {"Content-Disposition": 'attachment; filename="weekend-scorecard.csv"'}
     return Response(content=payload, media_type="text/csv; charset=utf-8", headers=headers)
@@ -607,7 +637,11 @@ def loyalty_list(
     db: Session = Depends(get_db),
 ):
     now = loyalty_svc.utc_now()
-    rows = loyalty_svc.list_members(db, q=q, segment=segment, sort=sort, direction=dir, now=now)
+    live = getreports_svc.live_members()
+    if live is not None:
+        rows = getreports_svc.filter_members(live, q=q, segment=segment, sort=sort, direction=dir, now=now)
+    else:
+        rows = loyalty_svc.list_members(db, q=q, segment=segment, sort=sort, direction=dir, now=now)
     page_rows, pager = loyalty_svc.paginate(rows, page)
     views = [loyalty_svc.member_view(m, now) for m in page_rows]
     stats = loyalty_svc.compute_stats(rows, now)
@@ -646,19 +680,42 @@ def loyalty_csv(
     db: Session = Depends(get_db),
 ):
     now = loyalty_svc.utc_now()
-    rows = loyalty_svc.list_members(db, q=q, segment=segment, sort=sort, direction=dir, now=now)
+    live = getreports_svc.live_members()
+    if live is not None:
+        rows = getreports_svc.filter_members(live, q=q, segment=segment, sort=sort, direction=dir, now=now)
+    else:
+        rows = loyalty_svc.list_members(db, q=q, segment=segment, sort=sort, direction=dir, now=now)
     payload = loyalty_svc.csv_bytes(rows, now)
     headers = {"Content-Disposition": 'attachment; filename="loyalty-members.csv"'}
     return Response(content=payload, media_type="text/csv; charset=utf-8", headers=headers)
 
 
 @app.get("/loyalty/{member_id}", response_class=HTMLResponse)
-def loyalty_detail(member_id: int, request: Request, db: Session = Depends(get_db)):
-    member = db.get(LoyaltyMember, member_id)
+def loyalty_detail(member_id: str, request: Request, db: Session = Depends(get_db)):
+    now = loyalty_svc.utc_now()
+    live = getreports_svc.live_members()
+    if live is not None:
+        member = next((m for m in live if str(m.id) == str(member_id)), None)
+        if member is None:
+            return Response("Member not found.", status_code=404)
+        return templates.TemplateResponse(
+            request,
+            "loyalty/detail.html",
+            {
+                "view": loyalty_svc.member_view(member, now),
+                "member": member,
+                "events": [],
+                "program": loyalty_svc.PROGRAM,
+            },
+        )
+    try:
+        mid = int(member_id)
+    except (TypeError, ValueError):
+        return Response("Member not found.", status_code=404)
+    member = db.get(LoyaltyMember, mid)
     if member is None:
         return Response("Member not found.", status_code=404)
-    now = loyalty_svc.utc_now()
-    events = loyalty_svc.events_for(db, member_id)
+    events = loyalty_svc.events_for(db, mid)
     return templates.TemplateResponse(
         request,
         "loyalty/detail.html",

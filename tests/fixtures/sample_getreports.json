@@ -1,0 +1,43 @@
+{
+  "ok": true,
+  "as_of": "2026-09-01T21:32:14Z",
+  "timezone": "America/Chicago",
+  "sales": {
+    "today": {
+      "tickets": 21,
+      "cents": 46732,
+      "dollars": 467.32,
+      "channels": {
+        "DoorDash": {"tickets": 2, "cents": 5574, "dollars": 55.74},
+        "Point of Sale": {"tickets": 19, "cents": 41158, "dollars": 411.58}
+      },
+      "top_items": [
+        {"name": "Vietnamese Coffee", "qty": 5, "cents": 3025},
+        {"name": "Birthday Cake Macaron", "qty": 4, "cents": 2751},
+        {"name": "Cinnamon Roll", "qty": 4, "cents": 2640},
+        {"name": "Matcha Latte", "qty": 3, "cents": 2227},
+        {"name": "Milk Tea", "qty": 3, "cents": 2089},
+        {"name": "Mango Entrement", "qty": 2, "cents": 2940}
+      ]
+    },
+    "week": {
+      "tickets": 46,
+      "cents": 109954,
+      "dollars": 1099.54,
+      "channels": {
+        "DoorDash": {"tickets": 3, "cents": 7194, "dollars": 71.94},
+        "Point of Sale": {"tickets": 42, "cents": 100938, "dollars": 1009.38},
+        "Uber Eats": {"tickets": 1, "cents": 1822, "dollars": 18.22}
+      },
+      "top_items": [
+        {"name": "Birthday Cake Macaron", "qty": 14, "cents": 9628},
+        {"name": "Mango Entrement", "qty": 8, "cents": 10860},
+        {"name": "Cinnamon Roll", "qty": 8, "cents": 5430},
+        {"name": "Vietnamese Coffee", "qty": 6, "cents": 3630},
+        {"name": "Milk Tea", "qty": 5, "cents": 3272},
+        {"name": "Matcha Latte", "qty": 4, "cents": 3024}
+      ]
+    }
+  },
+  "loyalty": {"gated": true, "path": "/loyalty"}
+}

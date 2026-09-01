@@ -192,6 +192,8 @@ Two services from this repo. Shop Tech does not `gcloud` or open billing.
 
 `BAKERY_SERVICE=drinks` 404s `/loyalty` (real phones). Public drinks fetches `GETORDERS_URL` on every refresh, groups by order, and tap-to-clear hides that order on the tablet (cookie, not a ticket DB). New drink lines ding once on the drinks board (not first load, not tap-off, not an unchanged 10s poll). First tap is a full-screen overlay that plays a test ding (iPad Safari unlock; later polls reuse that audio). Cleared orders stay off that iPad via localStorage. Laptop ingest is unchanged when `GETORDERS_URL` is unset. `INGEST_KEY` and `SQUARE_ACCESS_TOKEN` come from Secret Manager, not git. Header `X-Ingest-Key`. Sqlite on Cloud Run min 0 is ephemeral; laptop still sqlite.
 
+`BAKERY_SERVICE=desk` fetches `GETREPORTS_URL` on every `/reports` and `/weekend` refresh (parse-and-render, no sqlite upsert). Public getreports JSON is sales only (`ok`, `as_of`, `timezone`, `sales.today`, `sales.week`); `loyalty` is gated (`{"gated": true, "path": "/loyalty"}`). Desk pulls `/loyalty` only when `INGEST_KEY` is set (header `X-Ingest-Key`) — phones never go on an allUsers board. Laptop sqlite is unchanged when `GETREPORTS_URL` is unset. getreports does not send Saturday-vs-Saturday or drink×modifier rows; live weekend is today vs week-to-date from the same payload.
+
 Laptop default is unchanged (`BAKERY_SERVICE` unset or `laptop`).
 
 ## Optional Docker
