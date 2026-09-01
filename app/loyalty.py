@@ -425,6 +425,31 @@ def filtered_query(
     return stmt
 
 
+
+PAGE_SIZE = 50
+
+
+def paginate(rows: list, page: int, size: int = PAGE_SIZE) -> tuple[list, dict]:
+    total = len(rows)
+    pages = max(1, (total + size - 1) // size) if total else 1
+    try:
+        page_n = int(page or 1)
+    except (TypeError, ValueError):
+        page_n = 1
+    page_n = max(1, min(page_n, pages))
+    start = (page_n - 1) * size
+    return rows[start : start + size], {
+        "page": page_n,
+        "pages": pages,
+        "total": total,
+        "size": size,
+        "has_prev": page_n > 1,
+        "has_next": page_n < pages,
+        "from": (start + 1) if total else 0,
+        "to": min(start + size, total),
+    }
+
+
 def list_members(
     db: Session,
     q: str = "",

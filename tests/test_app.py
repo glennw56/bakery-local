@@ -166,3 +166,50 @@ def test_weekend_csv_has_header() -> None:
     assert "last_sat" in header
     assert "this_sat" in header
     assert "delta" in header
+
+
+def test_weekend_loads_on_existing_db_without_seed_script() -> None:
+    """Startup load_if_empty fills weekend on a db that already existed."""
+    response = client.get("/weekend")
+    assert response.status_code == 200
+    assert "Aug 29" in response.text or "August 29" in response.text or "29" in response.text
+    assert "Vietnamese Coffee" in response.text
+
+
+def test_loyalty_paginates_and_csv_is_full_filter() -> None:
+    from sqlalchemy import func, select
+
+    from app.db import SessionLocal
+    from app.loyalty import PAGE_SIZE
+    from app.models import LoyaltyMember
+    from scripts.seed_demo import main as seed_main
+
+    seed_main()
+    with SessionLocal() as db:
+        n = db.scalar(select(func.count(LoyaltyMember.id))) or 0
+        need = PAGE_SIZE + 7 - int(n)
+        for i in range(max(0, need)):
+            db.add(
+                LoyaltyMember(
+                    square_loyalty_id=f"page-{i}",
+                    given_name=f"Page{i}",
+                    family_name="Test",
+                    phone=f"+1205555{i:04d}"[-12:],
+                    points=1,
+                    lifetime_points=1,
+                )
+            )
+        db.commit()
+        total = db.scalar(select(func.count(LoyaltyMember.id))) or 0
+    assert total > PAGE_SIZE
+    page1 = client.get("/loyalty")
+    assert page1.status_code == 200
+    assert f"Page 1 of" in page1.text
+    assert "Next" in page1.text
+    page2 = client.get("/loyalty?page=2")
+    assert page2.status_code == 200
+    assert "Page 2 of" in page2.text
+    assert "Prev" in page2.text
+    csv = client.get("/loyalty.csv")
+    lines = [ln for ln in csv.text.splitlines() if ln.strip()]
+    assert len(lines) - 1 == total

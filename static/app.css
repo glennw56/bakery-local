@@ -457,3 +457,11 @@ body.weekend main { max-width: 96rem; }
   a { color: #000; text-decoration: none; }
   .report-block { break-inside: avoid; }
 }
+
+.pager {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin: 0.75rem 0;
+  font-size: 0.95rem;
+}

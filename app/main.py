@@ -104,6 +104,12 @@ DEMO_DRINKS = [
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    from app.db import SessionLocal
+    from scripts.load_weekend import load_if_empty
+
+    with SessionLocal() as db:
+        load_if_empty(db)
+        db.commit()
     yield
 
 
@@ -434,15 +440,18 @@ def loyalty_list(
     segment: str = Query("all"),
     sort: str = Query("points"),
     dir: str = Query("desc"),
+    page: int = Query(1),
     db: Session = Depends(get_db),
 ):
     now = loyalty_svc.utc_now()
     rows = loyalty_svc.list_members(db, q=q, segment=segment, sort=sort, direction=dir, now=now)
-    views = [loyalty_svc.member_view(m, now) for m in rows]
+    page_rows, pager = loyalty_svc.paginate(rows, page)
+    views = [loyalty_svc.member_view(m, now) for m in page_rows]
     stats = loyalty_svc.compute_stats(rows, now)
     hometown = loyalty_svc.hometown_rollup(rows)
     regions = loyalty_svc.region_counts(rows)
     csv_qs = loyalty_svc.filter_qs(q=q, segment=segment, sort=sort, dir=dir)
+    page_qs = loyalty_svc.filter_qs(q=q, segment=segment, sort=sort, dir=dir)
     return templates.TemplateResponse(
         request,
         "loyalty/list.html",
@@ -452,6 +461,7 @@ def loyalty_list(
             "sort": sort or "points",
             "dir": dir or "desc",
             "members": views,
+            "pager": pager,
             "stats": stats,
             "hometown": hometown,
             "regions": regions,
@@ -459,6 +469,7 @@ def loyalty_list(
             "chips": loyalty_svc.SEGMENT_CHIPS,
             "sorts": loyalty_svc.SORTS,
             "csv_qs": csv_qs,
+            "page_qs": page_qs,
         },
     )
 

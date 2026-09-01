@@ -125,7 +125,14 @@
   <section class="report-block">
     <h2>Members</h2>
     {% if members %}
-    <p class="hint">{{ members|length }} row{% if members|length != 1 %}s{% endif %}. Green = ready to redeem (≥100). Amber = lapsed 60d+. Click a name for the dossier.</p>
+    <p class="hint">{% if pager.total %}Showing {{ pager.from }}–{{ pager.to }} of {{ pager.total }}{% else %}0 rows{% endif %}. Green = ready to redeem (≥100). Amber = lapsed 60d+. Click a name for the dossier.</p>
+    {% if pager.pages > 1 %}
+    <nav class="pager" aria-label="Member pages">
+      {% if pager.has_prev %}<a href="/loyalty?{% if page_qs %}{{ page_qs }}&amp;{% endif %}page={{ pager.page - 1 }}">Prev</a>{% endif %}
+      <span>Page {{ pager.page }} of {{ pager.pages }}</span>
+      {% if pager.has_next %}<a href="/loyalty?{% if page_qs %}{{ page_qs }}&amp;{% endif %}page={{ pager.page + 1 }}">Next</a>{% endif %}
+    </nav>
+    {% endif %}
     <div class="table-wrap">
     <table class="sales loyalty-table">
       <thead>
@@ -170,6 +177,13 @@
       </tbody>
     </table>
     </div>
+    {% if pager.pages > 1 %}
+    <nav class="pager" aria-label="Member pages">
+      {% if pager.has_prev %}<a href="/loyalty?{% if page_qs %}{{ page_qs }}&amp;{% endif %}page={{ pager.page - 1 }}">Prev</a>{% endif %}
+      <span>Page {{ pager.page }} of {{ pager.pages }}</span>
+      {% if pager.has_next %}<a href="/loyalty?{% if page_qs %}{{ page_qs }}&amp;{% endif %}page={{ pager.page + 1 }}">Next</a>{% endif %}
+    </nav>
+    {% endif %}
     {% else %}
     <p class="empty-state">No loyalty members match. If the table is empty, drop <code>data/square_loyalty.json</code> and run <code>PYTHONPATH=. .venv/bin/python -m scripts.seed_demo</code> (or <code>python -m scripts.import_loyalty</code>).</p>
     {% endif %}
