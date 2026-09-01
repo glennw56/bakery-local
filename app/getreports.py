@@ -6,10 +6,12 @@ Loyalty phones stay on desk (never allUsers). /loyalty on getreports is gated.
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -22,15 +24,27 @@ CHICAGO = ZoneInfo("America/Chicago")
 CHANNEL_ORDER = ("Point of Sale", "DoorDash", "Uber Eats", "Square Online")
 
 
-def _http_get(url: str, headers: dict[str, str] | None = None) -> Any:
+def _http_get(url: str, headers: dict[str, str] | None = None, timeout: float = 15.0) -> Any:
     """{} on live fetch error. Caller already checked GETREPORTS_URL."""
     try:
-        with httpx.Client(timeout=15.0) as client:
+        with httpx.Client(timeout=timeout) as client:
             response = client.get(url, headers=headers or {})
             response.raise_for_status()
             return response.json()
     except Exception:
         return {}
+
+
+def loyalty_url(base: str) -> str:
+    """Always GET getreports /loyalty (Glenn also accepts ?loyalty=1). Never the sales /."""
+    raw = (base or "").strip()
+    parsed = urlparse(raw)
+    path = (parsed.path or "").rstrip("/")
+    if not path.endswith("/loyalty"):
+        path = f"{path}/loyalty" if path else "/loyalty"
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query.setdefault("loyalty", "1")
+    return urlunparse((parsed.scheme, parsed.netloc, path, parsed.params, urlencode(query), ""))
 
 
 def fetch_sales() -> Any | None:
@@ -50,7 +64,7 @@ def fetch_loyalty(ingest_key: str | None = None) -> Any | None:
     key = (ingest_key or "").strip()
     if key:
         headers["X-Ingest-Key"] = key
-    return _http_get(url.rstrip("/") + "/loyalty", headers)
+    return _http_get(loyalty_url(url), headers, timeout=60.0)
 
 
 def _as_of_chicago(payload: dict) -> datetime:
@@ -295,34 +309,140 @@ class LiveMember:
     area_region: str = "unknown"
 
 
+_MEMBER_LIST_KEYS = (
+    "members",
+    "accounts",
+    "loyalty_accounts",
+    "loyaltyAccounts",
+    "items",
+    "rows",
+)
+_WRAPPER_KEYS = ("loyalty", "data", "result", "payload", "body")
+_ID_KEYS = ("id", "loyalty_account_id", "loyaltyAccountId", "account_id", "accountId")
+_PHONE_KEYS = ("phone", "phone_number", "phoneNumber")
+_POINTS_KEYS = ("points", "balance")
+_CUSTOMER_KEYS = ("customer_id", "customerId")
+
+
+def _maybe_json(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    raw = value.strip()
+    if not raw or raw[0] not in "{[":
+        return value
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return value
+
+
+def _pick(row: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if key in row and row[key] not in (None, ""):
+            return row[key]
+    lowered = {str(k).casefold(): v for k, v in row.items()}
+    for key in keys:
+        got = lowered.get(key.casefold())
+        if got not in (None, ""):
+            return got
+    return None
+
+
+def _phone_from_row(row: dict[str, Any]) -> str:
+    phone = _pick(row, _PHONE_KEYS)
+    if phone not in (None, ""):
+        return str(phone).strip()
+    mapping = row.get("mapping")
+    if isinstance(mapping, dict):
+        phone = _pick(mapping, _PHONE_KEYS + ("value",))
+        if phone not in (None, ""):
+            return str(phone).strip()
+    mappings = row.get("mappings")
+    if isinstance(mappings, list):
+        for item in mappings:
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("type") or "").strip().upper()
+            if kind == "PHONE" or _pick(item, _PHONE_KEYS):
+                phone = _pick(item, _PHONE_KEYS + ("value",))
+                if phone not in (None, ""):
+                    return str(phone).strip()
+    return ""
+
+
+def _rows_from_value(value: Any) -> list[dict[str, Any]] | None:
+    value = _maybe_json(value)
+    if isinstance(value, list):
+        return [row for row in value if isinstance(row, dict)]
+    if isinstance(value, dict) and value:
+        vals = list(value.values())
+        if vals and all(isinstance(v, dict) for v in vals):
+            if not any(k in value for k in _ID_KEYS + _PHONE_KEYS + _POINTS_KEYS + _CUSTOMER_KEYS):
+                return [v for v in vals if isinstance(v, dict)]
+    return None
+
+
+def _walk_blocks(payload: Any) -> list[dict[str, Any]]:
+    root = _maybe_json(payload)
+    if isinstance(root, list):
+        return []
+    if not isinstance(root, dict):
+        return []
+    out: list[dict[str, Any]] = [root]
+    seen = {id(root)}
+    i = 0
+    while i < len(out):
+        block = out[i]
+        i += 1
+        for key in _WRAPPER_KEYS:
+            inner = _maybe_json(block.get(key))
+            if isinstance(inner, dict) and id(inner) not in seen:
+                seen.add(id(inner))
+                out.append(inner)
+    return out
+
+
+def _member_rows(payload: Any) -> list[dict[str, Any]]:
+    """Glenn shape is loyalty.members; also accept top-level / data / accounts wraps."""
+    root = _maybe_json(payload)
+    if isinstance(root, list):
+        return [row for row in root if isinstance(row, dict)]
+    for block in _walk_blocks(root):
+        if block.get("gated") and not any(
+            isinstance(block.get(key), (list, dict, str)) and key in _MEMBER_LIST_KEYS for key in _MEMBER_LIST_KEYS
+        ):
+            continue
+        for key in _MEMBER_LIST_KEYS:
+            rows = _rows_from_value(block.get(key))
+            if rows:
+                return rows
+        if isinstance(block.get("loyalty"), list):
+            rows = _rows_from_value(block.get("loyalty"))
+            if rows:
+                return rows
+    return []
+
+
 def members_from_payload(payload: Any) -> list[LiveMember]:
-    data = payload if isinstance(payload, dict) else {}
-    block = data.get("loyalty")
-    if block is None and isinstance(data.get("members"), list):
-        block = data
-    if not isinstance(block, dict):
-        return []
-    if block.get("gated"):
-        return []
-    rows = block.get("members")
-    if not isinstance(rows, list):
-        return []
+    rows = _member_rows(payload)
     out: list[LiveMember] = []
     for row in rows:
-        if not isinstance(row, dict):
+        mid = _pick(row, _ID_KEYS)
+        if mid in (None, ""):
+            mid = _pick(row, _CUSTOMER_KEYS)
+        mid_s = str(mid).strip() if mid not in (None, "") else ""
+        if not mid_s:
             continue
-        mid = str(row.get("id") or "").strip()
-        if not mid:
-            continue
-        phone = str(row.get("phone") or "").strip()
+        phone = _phone_from_row(row)
         geo = lookup_phone(phone)
+        cust = _pick(row, _CUSTOMER_KEYS)
         out.append(
             LiveMember(
-                id=mid,
-                square_loyalty_id=mid,
-                square_customer_id=str(row.get("customer_id") or "").strip(),
+                id=mid_s,
+                square_loyalty_id=mid_s,
+                square_customer_id=str(cust or "").strip(),
                 phone=phone,
-                points=_int(row.get("points")),
+                points=_int(_pick(row, _POINTS_KEYS)),
                 area_code=geo["area_code"],
                 area_metro=geo["area_metro"],
                 area_state=geo["area_state"],

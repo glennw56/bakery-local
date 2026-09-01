@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from urllib.parse import parse_qs, urlparse
+
 from app.getreports import (
     fetch_loyalty,
     fetch_sales,
+    loyalty_url,
     members_from_payload,
     reports_from_payload,
     scorecard_from_payload,
@@ -111,7 +114,12 @@ def test_fetch_loyalty_sends_header_and_skips_live_key(monkeypatch) -> None:
     monkeypatch.setattr("app.getreports.httpx.Client", _FakeClient)
     got = fetch_loyalty("test-not-live")
     assert got["loyalty"]["count"] == 2
-    assert _FakeClient.last_url == "https://getreports.example.test/loyalty"
+    parsed = urlparse(_FakeClient.last_url)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "getreports.example.test"
+    assert parsed.path.rstrip("/") == "/loyalty"
+    assert parsed.path.rstrip("/") != ""
+    assert parse_qs(parsed.query).get("loyalty") == ["1"]
     assert _FakeClient.last_headers == {"X-Ingest-Key": "test-not-live"}
 
 
@@ -230,3 +238,139 @@ def test_live_routes_parse_and_render(monkeypatch) -> None:
     assert csv.status_code == 200
     assert "LOY_FAKE_2" in csv.text
     assert "+12055550100" in csv.text
+
+FAKE_PHONE_A = "+15555550100"
+FAKE_PHONE_B = "+12055550100"
+
+
+def test_loyalty_url_never_sales_root() -> None:
+    parsed = urlparse(loyalty_url("https://getreports.example.test"))
+    assert parsed.path.rstrip("/") == "/loyalty"
+    already = urlparse(loyalty_url("https://getreports.example.test/loyalty"))
+    assert already.path.rstrip("/") == "/loyalty"
+    slash = urlparse(loyalty_url("https://getreports.example.test/"))
+    assert slash.path.rstrip("/") == "/loyalty"
+
+
+def test_members_from_alternate_live_shapes() -> None:
+    """Live /loyalty may wrap members under data/accounts or Square field names."""
+    shapes = [
+        {
+            "count": 2,
+            "members": [
+                {"id": "LOY_FAKE_1", "points": 150, "phone": FAKE_PHONE_A},
+                {"id": "LOY_FAKE_2", "points": 40, "phone": FAKE_PHONE_B},
+            ],
+        },
+        {
+            "data": {
+                "members": [
+                    {"id": "LOY_FAKE_1", "points": 150, "phone": FAKE_PHONE_A},
+                    {"id": "LOY_FAKE_2", "points": 40, "phone": FAKE_PHONE_B},
+                ]
+            }
+        },
+        {
+            "loyalty": {
+                "count": 2,
+                "accounts": [
+                    {
+                        "loyalty_account_id": "LOY_FAKE_1",
+                        "balance": 150,
+                        "phone_number": FAKE_PHONE_A,
+                        "customer_id": "CUST_FAKE_1",
+                    },
+                    {
+                        "loyalty_account_id": "LOY_FAKE_2",
+                        "balance": 40,
+                        "phone_number": FAKE_PHONE_B,
+                        "customer_id": "CUST_FAKE_2",
+                    },
+                ],
+            }
+        },
+        {
+            "ok": True,
+            "loyalty": {
+                "count": 2,
+                "loyalty_accounts": [
+                    {
+                        "id": "LOY_FAKE_1",
+                        "balance": 150,
+                        "customer_id": "CUST_FAKE_1",
+                        "mappings": [{"type": "PHONE", "phone_number": FAKE_PHONE_A}],
+                    },
+                    {
+                        "id": "LOY_FAKE_2",
+                        "balance": 40,
+                        "customer_id": "CUST_FAKE_2",
+                        "mapping": {"phone_number": FAKE_PHONE_B},
+                    },
+                ],
+            },
+        },
+    ]
+    for payload in shapes:
+        rows = members_from_payload(payload)
+        assert len(rows) == 2
+        by_id = {r.id: r for r in rows}
+        assert by_id["LOY_FAKE_1"].points == 150
+        assert by_id["LOY_FAKE_1"].phone == FAKE_PHONE_A
+        assert by_id["LOY_FAKE_2"].phone == FAKE_PHONE_B
+        count = payload.get("count")
+        if count is None and isinstance(payload.get("loyalty"), dict):
+            count = payload["loyalty"].get("count")
+        if count is not None:
+            assert len(rows) == int(count)
+
+
+def test_alias_shape_loyalty_page_members_not_zero(monkeypatch) -> None:
+    import os
+    import tempfile
+
+    if "BAKERY_DB" not in os.environ:
+        fd, db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.environ["BAKERY_DB"] = db
+
+    from fastapi.testclient import TestClient
+
+    from app.db import init_db
+    from app.getreports import members_from_payload
+    from app.main import app
+
+    init_db()
+    payload = {
+        "ok": True,
+        "loyalty": {
+            "count": 2,
+            "accounts": [
+                {
+                    "loyalty_account_id": "LOY_FAKE_1",
+                    "balance": 150,
+                    "phone_number": FAKE_PHONE_A,
+                },
+                {
+                    "loyalty_account_id": "LOY_FAKE_2",
+                    "balance": 40,
+                    "phone_number": FAKE_PHONE_B,
+                },
+            ],
+        },
+    }
+    rows = members_from_payload(payload)
+    assert len(rows) == 2
+    monkeypatch.setenv("GETREPORTS_URL", "https://getreports.example.test")
+    monkeypatch.delenv("INGEST_KEY", raising=False)
+    monkeypatch.setattr("app.getreports.fetch_sales", lambda: {"ok": True, "sales": {}})
+    monkeypatch.setattr(
+        "app.getreports.live_members",
+        lambda payload=None: members_from_payload(payload) if payload is not None else rows,
+    )
+    client = TestClient(app)
+    listed = client.get("/loyalty")
+    assert listed.status_code == 200
+    after_members = listed.text.split("Members", 1)[1][:240]
+    assert '<strong class="stat-value">0</strong>' not in after_members
+    assert '<strong class="stat-value">2</strong>' in listed.text
+    assert "LOY_FAKE_1" in listed.text or "(205) 555-0100" in listed.text
