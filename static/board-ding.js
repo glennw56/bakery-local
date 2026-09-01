@@ -1,7 +1,9 @@
-/* Kitchen ding for NEW drink lines since last poll. First load is silent. */
+/* Kitchen ding for NEW drink lines since last poll. First load is silent.
+   Audio stays off until the cook taps the full-screen gate. */
 (function () {
   const seen = new Set();
   let primed = false;
+  let unlocked = false;
   let audioCtx = null;
 
   function lineKeys() {
@@ -49,12 +51,29 @@
         fresh = true;
       }
     });
-    if (allowDing && fresh) ding();
+    if (allowDing && unlocked && fresh) ding();
   }
 
-  document.addEventListener("pointerdown", unlock);
+  function enable() {
+    unlocked = true;
+    unlock();
+    ding();
+    const gate = document.getElementById("kds-ding-gate");
+    if (gate) gate.hidden = true;
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     scan(false);
+    const gate = document.getElementById("kds-ding-gate");
+    if (gate) {
+      gate.addEventListener("click", enable);
+      gate.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          enable();
+        }
+      });
+    }
   });
   document.body.addEventListener("htmx:afterSwap", function (ev) {
     const target = ev.detail && ev.detail.target;

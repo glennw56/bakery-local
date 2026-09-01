@@ -35,6 +35,10 @@
     {% include "board/_tickets.html" %}
   </section>
   {% if ding_new %}
+  <div id="kds-ding-gate" class="kds-ding-gate" role="dialog" aria-modal="true" tabindex="0">
+    <p class="kds-ding-title">Tap to turn on the ding</p>
+    <p class="kds-ding-copy">You will not hear new drinks until you do</p>
+  </div>
   <script src="/static/board-ding.js"></script>
   {% endif %}
 </body>

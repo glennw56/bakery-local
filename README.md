@@ -190,7 +190,7 @@ Two services from this repo. Shop Tech does not `gcloud` or open billing.
 | `bakery-drinks` | `Dockerfile.drinks` | private first, allUsers only after `/board` and `/health` work | `/board`, `/health`, `POST /internal/ingest` |
 | `bakery-desk` | `Dockerfile.desk` | never allUsers | `/`, `/reports`, `/weekend`, `/loyalty`, `/notes` |
 
-`BAKERY_SERVICE=drinks` 404s `/loyalty` (real phones). Public drinks fetches `GETORDERS_URL` on every refresh, groups by order, and tap-to-clear hides that order on the tablet (cookie, not a ticket DB). New drink lines ding once on the drinks board (not first load, not tap-off, not an unchanged 10s poll). Laptop ingest is unchanged when `GETORDERS_URL` is unset. `INGEST_KEY` and `SQUARE_ACCESS_TOKEN` come from Secret Manager, not git. Header `X-Ingest-Key`. Sqlite on Cloud Run min 0 is ephemeral; laptop still sqlite.
+`BAKERY_SERVICE=drinks` 404s `/loyalty` (real phones). Public drinks fetches `GETORDERS_URL` on every refresh, groups by order, and tap-to-clear hides that order on the tablet (cookie, not a ticket DB). New drink lines ding once on the drinks board (not first load, not tap-off, not an unchanged 10s poll). First tap is a full-screen overlay that plays a test ding. Laptop ingest is unchanged when `GETORDERS_URL` is unset. `INGEST_KEY` and `SQUARE_ACCESS_TOKEN` come from Secret Manager, not git. Header `X-Ingest-Key`. Sqlite on Cloud Run min 0 is ephemeral; laptop still sqlite.
 
 Laptop default is unchanged (`BAKERY_SERVICE` unset or `laptop`).
 

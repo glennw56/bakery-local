@@ -39,3 +39,5 @@ def test_drinks_board_includes_ding_script(monkeypatch) -> None:
     page = client.get("/board")
     assert page.status_code == 200
     assert "/static/board-ding.js" in page.text
+    assert "Tap to turn on the ding" in page.text
+    assert "You will not hear new drinks until you do" in page.text
