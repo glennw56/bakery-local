@@ -418,6 +418,9 @@ def board_page(
     db: Session = Depends(get_db),
 ):
     minutes = clamp_minutes(minutes)
+    from app.getorders import sync_if_configured
+
+    sync_if_configured(db)
     rows = tickets_in_window(db, minutes)
     return templates.TemplateResponse(
         request,
@@ -436,6 +439,9 @@ def board_tickets(
     db: Session = Depends(get_db),
 ):
     minutes = clamp_minutes(minutes)
+    from app.getorders import sync_if_configured
+
+    sync_if_configured(db)
     rows = tickets_in_window(db, minutes)
     return templates.TemplateResponse(
         request,

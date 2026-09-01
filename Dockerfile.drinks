@@ -23,6 +23,7 @@ ENV BAKERY_DB=/app/data/app.db
 ENV HOST=0.0.0.0
 ENV PORT=8000
 ENV BAKERY_SERVICE=drinks
+ENV GETORDERS_URL=https://getorders-k6uuoen7wa-ue.a.run.app
 
 EXPOSE 8000
 
