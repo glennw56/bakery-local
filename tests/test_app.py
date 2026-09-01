@@ -115,7 +115,7 @@ def test_seed_then_loyalty_contains_a_name_and_points() -> None:
         name = named.given_name
         points = named.points
         member_id = named.id
-    listed = client.get("/loyalty")
+    listed = client.get("/loyalty?q=" + name)
     assert listed.status_code == 200
     assert name in listed.text
     assert str(points) in listed.text
@@ -168,48 +168,123 @@ def test_weekend_csv_has_header() -> None:
     assert "delta" in header
 
 
-def test_weekend_loads_on_existing_db_without_seed_script() -> None:
-    """Startup load_if_empty fills weekend on a db that already existed."""
-    response = client.get("/weekend")
-    assert response.status_code == 200
-    assert "Aug 29" in response.text or "August 29" in response.text or "29" in response.text
-    assert "Vietnamese Coffee" in response.text
+def test_weekend_empty_tables_load_and_nonempty_stay_put() -> None:
+    """init_db loads sample weekend JSON only when weekend_days is empty."""
+    from sqlalchemy import delete, func, select
+
+    from app.db import SessionLocal, init_db
+    from app.models import DrinkTicket, LoyaltyMember, SalesSummary, WeekendDay, WeekendItem
+
+    with SessionLocal() as db:
+        reports = db.scalar(select(func.count(SalesSummary.id))) or 0
+        loyalty = db.scalar(select(func.count(LoyaltyMember.id))) or 0
+        tickets = db.scalar(select(func.count(DrinkTicket.id))) or 0
+        db.execute(delete(WeekendItem))
+        db.execute(delete(WeekendDay))
+        db.commit()
+        assert (db.scalar(select(func.count(WeekendDay.id))) or 0) == 0
+
+    init_db()
+
+    with SessionLocal() as db:
+        loaded = db.scalar(select(func.count(WeekendDay.id))) or 0
+        assert loaded >= 2
+        assert (db.scalar(select(func.count(SalesSummary.id))) or 0) == reports
+        assert (db.scalar(select(func.count(LoyaltyMember.id))) or 0) == loyalty
+        assert (db.scalar(select(func.count(DrinkTicket.id))) or 0) == tickets
+        day = db.scalars(select(WeekendDay).order_by(WeekendDay.sold_on)).first()
+        assert day is not None
+        sold_on = day.sold_on
+        marker = int(day.tickets) + 999
+        day.tickets = marker
+        db.commit()
+
+    init_db()
+
+    with SessionLocal() as db:
+        day = db.scalar(select(WeekendDay).where(WeekendDay.sold_on == sold_on))
+        assert day is not None
+        assert day.tickets == marker
+        assert (db.scalar(select(func.count(WeekendDay.id))) or 0) == loaded
+        assert (db.scalar(select(func.count(SalesSummary.id))) or 0) == reports
+        assert (db.scalar(select(func.count(LoyaltyMember.id))) or 0) == loyalty
+        assert (db.scalar(select(func.count(DrinkTicket.id))) or 0) == tickets
+
+    page = client.get("/weekend")
+    assert page.status_code == 200
+    assert "Vietnamese Coffee" in page.text
+
+
+def _loyalty_table_rows(html: str) -> int:
+    import re
+
+    match = re.search(
+        r'<table class="sales loyalty-table">.*?<tbody>(.*?)</tbody>',
+        html,
+        re.S,
+    )
+    assert match is not None
+    return len(re.findall(r"<tr\b", match.group(1)))
 
 
 def test_loyalty_paginates_and_csv_is_full_filter() -> None:
+    import re
+
     from sqlalchemy import func, select
 
     from app.db import SessionLocal
     from app.loyalty import PAGE_SIZE
     from app.models import LoyaltyMember
-    from scripts.seed_demo import main as seed_main
 
-    seed_main()
+    prefix = "PageQUnique"
+    extra = PAGE_SIZE + 15
     with SessionLocal() as db:
-        n = db.scalar(select(func.count(LoyaltyMember.id))) or 0
-        need = PAGE_SIZE + 7 - int(n)
-        for i in range(max(0, need)):
+        have = db.scalar(
+            select(func.count(LoyaltyMember.id)).where(LoyaltyMember.given_name == prefix)
+        ) or 0
+        for i in range(int(have), extra):
             db.add(
                 LoyaltyMember(
-                    square_loyalty_id=f"page-{i}",
-                    given_name=f"Page{i}",
-                    family_name="Test",
-                    phone=f"+1205555{i:04d}"[-12:],
-                    points=1,
-                    lifetime_points=1,
+                    square_loyalty_id=f"pageq-{i:03d}",
+                    given_name=prefix,
+                    family_name=f"{i:03d}",
+                    phone=f"+1205555{i:04d}",
+                    points=i,
+                    lifetime_points=i,
+                    area_code="205",
+                    area_metro="Birmingham",
+                    area_state="AL",
+                    area_region="local",
                 )
             )
         db.commit()
-        total = db.scalar(select(func.count(LoyaltyMember.id))) or 0
-    assert total > PAGE_SIZE
-    page1 = client.get("/loyalty")
+
+    page1 = client.get(f"/loyalty?q={prefix}")
     assert page1.status_code == 200
-    assert f"Page 1 of" in page1.text
+    assert _loyalty_table_rows(page1.text) == PAGE_SIZE
+    assert "Page 1 of 2" in page1.text
     assert "Next" in page1.text
-    page2 = client.get("/loyalty?page=2")
+    assert f"q={prefix}" in page1.text
+    assert "page=2" in page1.text
+    assert re.search(
+        rf'stat-label">Members</span>\s*<strong class="stat-value">{extra}</strong>',
+        page1.text,
+    )
+    assert f'<td class="num">{extra}</td>' in page1.text
+
+    page2 = client.get(f"/loyalty?q={prefix}&page=2")
     assert page2.status_code == 200
-    assert "Page 2 of" in page2.text
+    assert _loyalty_table_rows(page2.text) == extra - PAGE_SIZE
+    assert "Page 2 of 2" in page2.text
     assert "Prev" in page2.text
-    csv = client.get("/loyalty.csv")
-    lines = [ln for ln in csv.text.splitlines() if ln.strip()]
-    assert len(lines) - 1 == total
+    assert f"q={prefix}" in page2.text
+    assert "page=1" in page2.text
+    assert re.search(
+        rf'stat-label">Members</span>\s*<strong class="stat-value">{extra}</strong>',
+        page2.text,
+    )
+
+    csv = client.get(f"/loyalty.csv?q={prefix}")
+    assert csv.status_code == 200
+    lines = [ln for ln in csv.text.lstrip("\ufeff").splitlines() if ln.strip()]
+    assert len(lines) - 1 == extra
