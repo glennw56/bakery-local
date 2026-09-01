@@ -180,6 +180,20 @@ Or `make test`, or `PYTHONPATH=. .venv/bin/pytest -q`. Uses a throwaway sqlite f
 2. Add a route in `app/main.py` that returns `templates.TemplateResponse(...)`.
 3. Link it from the header or dashboard. For in-page updates, `hx-get` the route and set `hx-target` on the element you want to replace.
 
+
+## Cloud Run split (Glenn deploys)
+
+Two services from this repo. Shop Tech does not `gcloud` or open billing.
+
+| Service | Image | Public | Routes |
+| --- | --- | --- | --- |
+| `bakery-drinks` | `Dockerfile.drinks` | private first, allUsers only after `/board` and `/health` work | `/board`, `/health`, `POST /internal/ingest` |
+| `bakery-desk` | `Dockerfile.desk` | never allUsers | `/`, `/reports`, `/weekend`, `/loyalty`, `/notes` |
+
+`BAKERY_SERVICE=drinks` 404s `/loyalty` (real phones). `INGEST_KEY` and `SQUARE_ACCESS_TOKEN` come from Secret Manager, not git. Header `X-Ingest-Key`. Sqlite on Cloud Run min 0 is ephemeral; laptop still sqlite.
+
+Laptop default is unchanged (`BAKERY_SERVICE` unset or `laptop`).
+
 ## Optional Docker
 
 Not required. Preferred on the shop laptop is venv. If you want clone-and-up:

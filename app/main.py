@@ -11,6 +11,8 @@ Demo drink is POST /board/demo-tick. Poll: GET /board/tickets every 10s.
 from __future__ import annotations
 
 import json
+import os
+import secrets
 import random
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -18,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, Form, Query, Request
+from fastapi import Depends, FastAPI, Form, Header, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -118,6 +120,69 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+def bakery_service() -> str:
+    raw = (os.environ.get("BAKERY_SERVICE") or "laptop").strip().lower()
+    if raw in ("drinks", "desk", "laptop"):
+        return raw
+    return "laptop"
+
+
+@app.middleware("http")
+async def service_gate(request: Request, call_next):
+    """drinks never serves loyalty/phones. desk is not the tablet."""
+    service = bakery_service()
+    path = request.url.path
+    if service == "drinks":
+        allowed = (
+            path == "/"
+            or path == "/health"
+            or path.startswith("/board")
+            or path.startswith("/internal/ingest")
+            or path.startswith("/static")
+        )
+        if not allowed:
+            return Response("Not found.", status_code=404)
+    elif service == "desk":
+        blocked = path.startswith("/board") or path.startswith("/internal/ingest")
+        if blocked:
+            return Response("Not found.", status_code=404)
+    return await call_next(request)
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "service": bakery_service()}
+
+
+@app.post("/internal/ingest")
+def internal_ingest(
+    request: Request,
+    x_ingest_key: str | None = Header(default=None, alias="X-Ingest-Key"),
+):
+    """Cloud Scheduler / laptop hook. Never public without INGEST_KEY."""
+    if bakery_service() == "desk":
+        return Response("Not found.", status_code=404)
+    expected = (os.environ.get("INGEST_KEY") or "").strip()
+    got = (x_ingest_key or "").strip()
+    if not expected or not got or not secrets.compare_digest(got, expected):
+        return Response("Unauthorized.", status_code=401)
+    token = (os.environ.get("SQUARE_ACCESS_TOKEN") or "").strip()
+    if not token:
+        return Response("Square token not set.", status_code=503)
+    from scripts.ingest_drinks import DEFAULT_API_BASE, DEFAULT_LOCATION_ID, ingest_once
+
+    location_id = (os.environ.get("SQUARE_LOCATION_ID") or "").strip() or DEFAULT_LOCATION_ID
+    base_url = (os.environ.get("SQUARE_API_BASE") or DEFAULT_API_BASE).rstrip("/")
+    inserted, skipped = ingest_once(
+        token=token,
+        location_id=location_id,
+        minutes=20,
+        base_url=base_url,
+    )
+    return {"inserted": inserted, "skipped": skipped}
+
+
+
 def _is_htmx(request: Request) -> bool:
     return request.headers.get("hx-request") == "true"
 
@@ -208,6 +273,8 @@ templates.env.filters["chicago_date"] = loyalty_svc.chicago_date
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
+    if bakery_service() == "drinks":
+        return RedirectResponse("/board", status_code=302)
     ticket_count = db.scalar(select(func.count(DrinkTicket.id))) or 0
     drink_count = db.scalar(select(func.coalesce(func.sum(DrinkTicket.qty), 0))) or 0
     top_row = db.execute(
