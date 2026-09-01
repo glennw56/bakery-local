@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Log in · Bakery Local{% endblock %}
+{% block content %}
+  <h1>Log in</h1>
+  <p class="lede">Desk reports and loyalty. Same email + password form as bakery-apply.</p>
+  {% if error %}
+  <p class="flash-error">{{ error }}</p>
+  {% endif %}
+  <form class="note-form" method="post" action="/login">
+    <label>Email
+      <input type="email" name="email" required autocomplete="email">
+    </label>
+    <label>Password
+      <input type="password" name="password" required autocomplete="current-password">
+    </label>
+    <button type="submit">Log in</button>
+  </form>
+{% endblock %}

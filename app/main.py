@@ -32,6 +32,7 @@ from app.models import DrinkModifier, DrinkTicket, LoyaltyMember, MerchItem, Not
 from app import loyalty as loyalty_svc
 from app import weekend as weekend_svc
 from app import getreports as getreports_svc
+from app import auth as desk_auth
 
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = ROOT / "templates"
@@ -128,11 +129,23 @@ def bakery_service() -> str:
     return "laptop"
 
 
+def gate_required() -> bool:
+    """Laptop stays open unless ADMIN_PASSWORD is set. Desk always gated (fail closed). Drinks never."""
+    service = bakery_service()
+    if service == "drinks":
+        return False
+    if service == "desk":
+        return True
+    return bool((os.environ.get("ADMIN_PASSWORD") or "").strip())
+
+
 @app.middleware("http")
 async def service_gate(request: Request, call_next):
-    """drinks never serves loyalty/phones. desk is not the tablet."""
+    """drinks never serves loyalty/phones. desk is not the tablet. desk password gate."""
     service = bakery_service()
     path = request.url.path
+    request.state.desk_gate = False
+    request.state.desk_authed = False
     if service == "drinks":
         allowed = (
             path == "/"
@@ -143,16 +156,56 @@ async def service_gate(request: Request, call_next):
         )
         if not allowed:
             return Response("Not found.", status_code=404)
-    elif service == "desk":
+        return await call_next(request)
+    if service == "desk":
         blocked = path.startswith("/board") or path.startswith("/internal/ingest")
         if blocked:
             return Response("Not found.", status_code=404)
+    if gate_required() and desk_auth.path_is_protected(path) and not desk_auth.session_ok(request):
+        if request.headers.get("hx-request") == "true":
+            return Response("Unauthorized.", status_code=401)
+        return RedirectResponse("/login", status_code=303)
+    request.state.desk_gate = gate_required()
+    request.state.desk_authed = (not gate_required()) or desk_auth.session_ok(request)
     return await call_next(request)
 
 
 @app.get("/health")
 def health():
     return {"ok": True, "service": bakery_service()}
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_form(request: Request):
+    if not gate_required():
+        return RedirectResponse("/", status_code=303)
+    if desk_auth.session_ok(request):
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse(request, "login.html", {"error": ""})
+
+
+@app.post("/login")
+def login(request: Request, email: str = Form(...), password: str = Form(...)):
+    if not gate_required() and not (os.environ.get("ADMIN_PASSWORD") or "").strip():
+        return RedirectResponse("/", status_code=303)
+    if desk_auth.verify_credentials(email, password):
+        response = RedirectResponse("/", status_code=303)
+        desk_auth.set_session_cookie(response)
+        return response
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {"error": "Email or password did not match."},
+        status_code=401,
+    )
+
+
+@app.post("/logout")
+def logout():
+    dest = "/login" if gate_required() else "/"
+    response = RedirectResponse(dest, status_code=303)
+    desk_auth.clear_session_cookie(response)
+    return response
 
 
 @app.post("/internal/ingest")

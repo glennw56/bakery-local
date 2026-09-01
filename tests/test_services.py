@@ -23,13 +23,13 @@ def test_drinks_board_ok_loyalty_404(monkeypatch) -> None:
     assert ingest.status_code == 401
 
 
-def test_desk_loyalty_ok_board_404(monkeypatch) -> None:
+def test_desk_loyalty_gated_board_404(monkeypatch) -> None:
     monkeypatch.setenv("BAKERY_SERVICE", "desk")
-    from scripts.seed_demo import main as seed_main
-
-    seed_main()
-    loyalty = client.get("/loyalty")
-    assert loyalty.status_code == 200
+    monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+    loyalty = client.get("/loyalty", follow_redirects=False)
+    assert loyalty.status_code in (401, 302, 303)
+    if loyalty.status_code in (302, 303):
+        assert "/login" in loyalty.headers.get("location", "")
     board = client.get("/board")
     assert board.status_code == 404
     ingest = client.post("/internal/ingest")

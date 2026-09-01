@@ -27,7 +27,9 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 
 | Route | What |
 | --- | --- |
-| `GET /` | Admin dashboard — stat tiles + links |
+| `GET /` | Admin dashboard — stat tiles + links (behind desk login when gated) |
+| `GET`/`POST /login` | Desk gate: email + password (bakery-apply form). Open when the gate is on |
+| `POST /logout` | Clear desk session cookie |
 | `GET /reports` | Weekend vs weekday, top items, drink × modifier, merch, site landmines |
 | `GET /weekend` | Marketing scorecard: this Saturday vs last (tickets, mix, top 10, do-not-feature) |
 | `GET /weekend.csv` | Same comparison, UTF-8 CSV (`metric`, `last_sat`, `this_sat`, `delta`) |
@@ -188,11 +190,13 @@ Two services from this repo. Shop Tech does not `gcloud` or open billing.
 | Service | Image | Public | Routes |
 | --- | --- | --- | --- |
 | `bakery-drinks` | `Dockerfile.drinks` | private first, allUsers only after `/board` and `/health` work | `/board`, `/health`, `POST /internal/ingest` |
-| `bakery-desk` | `Dockerfile.desk` | never allUsers | `/`, `/reports`, `/weekend`, `/loyalty`, `/notes` |
+| `bakery-desk` | `Dockerfile.desk` | never allUsers until the password gate works | `/`, `/reports`, `/weekend`, `/loyalty`, `/notes` |
 
 `BAKERY_SERVICE=drinks` 404s `/loyalty` (real phones). Public drinks fetches `GETORDERS_URL` on every refresh, groups by order, and tap-to-clear hides that order on the tablet (cookie, not a ticket DB). New drink lines ding once on the drinks board (not first load, not tap-off, not an unchanged 10s poll). First tap is a full-screen overlay that plays a test ding (iPad Safari unlock; later polls reuse that audio). Cleared orders stay off that iPad via localStorage. Laptop ingest is unchanged when `GETORDERS_URL` is unset. `INGEST_KEY` and `SQUARE_ACCESS_TOKEN` come from Secret Manager, not git. Header `X-Ingest-Key`. Sqlite on Cloud Run min 0 is ephemeral; laptop still sqlite.
 
-`BAKERY_SERVICE=desk` fetches `GETREPORTS_URL` on every `/reports` and `/weekend` refresh (parse-and-render, no sqlite upsert). Public getreports JSON is sales only (`ok`, `as_of`, `timezone`, `sales.today`, `sales.week`); `loyalty` is gated (`{"gated": true, "path": "/loyalty"}`). Desk pulls `/loyalty` **server-side only** when `INGEST_KEY` is set (header `X-Ingest-Key`, same secret as drinks ingest). Never fetch `/loyalty` from a public page or drinks. Never allUsers. Loyalty stays private until CoS says. Laptop sqlite is unchanged when `GETREPORTS_URL` is unset. getreports does not send Saturday-vs-Saturday or drink×modifier rows; live weekend is today vs week-to-date from the same payload. `Dockerfile.desk` bakes `GETREPORTS_URL`; it does not bake `INGEST_KEY`.
+`BAKERY_SERVICE=desk` fetches `GETREPORTS_URL` on every `/reports` and `/weekend` refresh (parse-and-render, no sqlite upsert). Public getreports JSON is sales only (`ok`, `as_of`, `timezone`, `sales.today`, `sales.week`); `loyalty` is gated (`{"gated": true, "path": "/loyalty"}`). Desk pulls `/loyalty` **server-side only** when `INGEST_KEY` is set (header `X-Ingest-Key`, same secret as drinks ingest). Never fetch `/loyalty` from a public page or drinks. Never allUsers until the password gate works. Loyalty stays private. Laptop sqlite is unchanged when `GETREPORTS_URL` is unset. getreports does not send Saturday-vs-Saturday or drink×modifier rows; live weekend is today vs week-to-date from the same payload. `Dockerfile.desk` bakes `GETREPORTS_URL`; it does not bake `INGEST_KEY` or `ADMIN_PASSWORD`.
+
+Desk login reuses the bakery-apply email + password form (`GET`/`POST /login`, `POST /logout`). Expected email is `glenn.will799@gmail.com` (hardcoded, not a secret). Password is `ADMIN_PASSWORD` from Glenn Secret Manager — never git, never the image, never logs. Session is an httponly HMAC cookie, not the password. `/health` stays open for Cloud Run. `/`, `/reports`, `/weekend`, `/loyalty` (and csv/detail) stay behind login. Laptop with `ADMIN_PASSWORD` unset stays unlocked. `BAKERY_SERVICE=drinks` does **not** get this gate (`/board` stays public; `/loyalty` still 404s). If desk is missing `ADMIN_PASSWORD`, show login that cannot succeed (fail closed).
 
 Laptop default is unchanged (`BAKERY_SERVICE` unset or `laptop`).
 

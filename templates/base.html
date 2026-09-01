@@ -17,6 +17,11 @@
       <a href="/loyalty">Loyalty</a>
       <a href="/board">Drink board</a>
       <a href="/notes">Notes</a>
+      {% if request.state.desk_authed and request.state.desk_gate %}
+      <form class="nav-logout" method="post" action="/logout">
+        <button type="submit">Log out</button>
+      </form>
+      {% endif %}
     </nav>
   </header>
   <main>

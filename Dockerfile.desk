@@ -24,6 +24,7 @@ ENV HOST=0.0.0.0
 ENV PORT=8000
 ENV BAKERY_SERVICE=desk
 # Live desk (Glenn). Unset = laptop sqlite. Never allUsers — phones stay private.
+# ADMIN_PASSWORD from Glenn Secret Manager at deploy. Do not bake it here.
 ENV GETREPORTS_URL=https://getreports-k6uuoen7wa-ue.a.run.app
 
 EXPOSE 8000

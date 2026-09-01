@@ -515,3 +515,16 @@ body.kds, body.kds * { touch-action: manipulation; }
   margin: 0.75rem 0;
   font-size: 0.95rem;
 }
+
+.nav-logout { margin: 0; display: inline; }
+.nav-logout button {
+  background: transparent;
+  color: #ffe38a;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.nav-logout button:hover { text-decoration: underline; color: #fff; }
+.flash-error { color: var(--danger); font-weight: 700; }
