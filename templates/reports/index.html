@@ -48,6 +48,55 @@
     {% endif %}
   </section>
 
+  {% if today_channels or week_channels %}
+  <section class="report-block">
+    <h2>Channels</h2>
+    <p class="hint">Today and week-to-date from getreports. Amounts from cents — not a second dollars field.</p>
+    {% if today_channels %}
+    <h3 class="drink-head">Today</h3>
+    <table class="sales">
+      <thead>
+        <tr>
+          <th>Channel</th>
+          <th class="num">Tickets</th>
+          <th class="num">Sales</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in today_channels %}
+        <tr>
+          <td>{{ row.name }}</td>
+          <td class="num">{{ row.tickets }}</td>
+          <td class="num">{{ row.cents|dollars }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if week_channels %}
+    <h3 class="drink-head">Week to date</h3>
+    <table class="sales">
+      <thead>
+        <tr>
+          <th>Channel</th>
+          <th class="num">Tickets</th>
+          <th class="num">Sales</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in week_channels %}
+        <tr>
+          <td>{{ row.name }}</td>
+          <td class="num">{{ row.tickets }}</td>
+          <td class="num">{{ row.cents|dollars }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+  {% endif %}
+
   <section class="report-block">
     <h2>Top items</h2>
     {% if top_items %}

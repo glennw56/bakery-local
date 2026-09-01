@@ -19,27 +19,38 @@ from app.drinks import is_drink
 from app.weekend import DRINK_MIX_ORDER, MANGO_NAME, VIET_NAME, _pct, pair_sentence
 
 CHICAGO = ZoneInfo("America/Chicago")
+CHANNEL_ORDER = ("Point of Sale", "DoorDash", "Uber Eats", "Square Online")
 
 
-def fetch_payload(suffix: str = "", payload: Any | None = None) -> Any | None:
-    """None when GETREPORTS_URL is unset (use sqlite). {} on live fetch error."""
-    if payload is not None:
-        return payload
-    url = (os.environ.get("GETREPORTS_URL") or "").strip()
-    if not url:
-        return None
-    target = url.rstrip("/") + (suffix or "")
-    headers: dict[str, str] = {}
-    key = (os.environ.get("INGEST_KEY") or "").strip()
-    if key and "/loyalty" in (suffix or ""):
-        headers["X-Ingest-Key"] = key
+def _http_get(url: str, headers: dict[str, str] | None = None) -> Any:
+    """{} on live fetch error. Caller already checked GETREPORTS_URL."""
     try:
         with httpx.Client(timeout=15.0) as client:
-            response = client.get(target, headers=headers)
+            response = client.get(url, headers=headers or {})
             response.raise_for_status()
             return response.json()
     except Exception:
         return {}
+
+
+def fetch_sales() -> Any | None:
+    """GET sales JSON. None when GETREPORTS_URL is unset (laptop sqlite). {} on error."""
+    url = (os.environ.get("GETREPORTS_URL") or "").strip()
+    if not url:
+        return None
+    return _http_get(url)
+
+
+def fetch_loyalty(ingest_key: str | None = None) -> Any | None:
+    """GET /loyalty with X-Ingest-Key. None when GETREPORTS_URL unset. {} on error."""
+    url = (os.environ.get("GETREPORTS_URL") or "").strip()
+    if not url:
+        return None
+    headers: dict[str, str] = {}
+    key = (ingest_key or "").strip()
+    if key:
+        headers["X-Ingest-Key"] = key
+    return _http_get(url.rstrip("/") + "/loyalty", headers)
 
 
 def _as_of_chicago(payload: dict) -> datetime:
@@ -55,18 +66,37 @@ def _as_of_chicago(payload: dict) -> datetime:
     return dt.astimezone(CHICAGO)
 
 
+def _int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _channel_rows(raw: Any) -> list[dict[str, Any]]:
+    """tickets + cents only. Do not copy payload dollars."""
+    if not isinstance(raw, dict):
+        return []
+    names = [n for n in CHANNEL_ORDER if n in raw]
+    names += sorted((n for n in raw if n not in CHANNEL_ORDER), key=str.casefold)
+    out: list[dict[str, Any]] = []
+    for name in names:
+        row = raw.get(name)
+        if not isinstance(row, dict):
+            continue
+        label = str(name or "").strip()
+        if not label:
+            continue
+        out.append({"name": label, "tickets": _int(row.get("tickets")), "cents": _int(row.get("cents"))})
+    return out
+
+
 def _rollup(block: Any) -> dict[str, Any]:
     if not isinstance(block, dict):
         block = {}
-    try:
-        tickets = int(block.get("tickets") or 0)
-    except (TypeError, ValueError):
-        tickets = 0
-    try:
-        cents = int(block.get("cents") or 0)
-    except (TypeError, ValueError):
-        cents = 0
-    channels = block.get("channels") if isinstance(block.get("channels"), dict) else {}
+    tickets = _int(block.get("tickets"))
+    cents = _int(block.get("cents"))
+    channels = _channel_rows(block.get("channels"))
     top = block.get("top_items") if isinstance(block.get("top_items"), list) else []
     items: list[tuple[str, int, int]] = []
     for row in top:
@@ -75,15 +105,7 @@ def _rollup(block: Any) -> dict[str, Any]:
         name = str(row.get("name") or "").strip()
         if not name:
             continue
-        try:
-            qty = int(row.get("qty") or 0)
-        except (TypeError, ValueError):
-            qty = 0
-        try:
-            item_cents = int(row.get("cents") or 0)
-        except (TypeError, ValueError):
-            item_cents = 0
-        items.append((name, qty, item_cents))
+        items.append((name, _int(row.get("qty")), _int(row.get("cents"))))
     return {"tickets": tickets, "cents": cents, "channels": channels, "top_items": items}
 
 
@@ -125,7 +147,7 @@ class LiveSummary:
 
 
 def reports_from_payload(payload: Any) -> dict[str, Any]:
-    """Template vars for /reports. No drink-modifier matrix; getreports does not send one."""
+    """Template vars for /reports. Empty merch/modifiers — getreports does not send them."""
     data = payload if isinstance(payload, dict) else {}
     sales = data.get("sales") if isinstance(data.get("sales"), dict) else {}
     today = _rollup(sales.get("today"))
@@ -151,6 +173,8 @@ def reports_from_payload(payload: Any) -> dict[str, Any]:
         "weekday_tickets": weekday_tickets,
         "weekday_cents": weekday_cents,
         "top_items": top_items,
+        "today_channels": today["channels"],
+        "week_channels": week["channels"],
         "modifiers_by_drink": {},
         "merch": [],
         "today_tickets": today["tickets"],
@@ -160,7 +184,7 @@ def reports_from_payload(payload: Any) -> dict[str, Any]:
 
 
 def scorecard_from_payload(payload: Any) -> dict[str, Any]:
-    """Same keys as weekend.scorecard. Today vs week-to-date (getreports has no Saturday pair)."""
+    """Today vs week-to-date. getreports has no Saturday pair — do not invent one."""
     data = payload if isinstance(payload, dict) else {}
     sales = data.get("sales") if isinstance(data.get("sales"), dict) else {}
     today = _rollup(sales.get("today"))
@@ -213,6 +237,8 @@ def scorecard_from_payload(payload: Any) -> dict[str, Any]:
         "empty": empty,
         "this_on": this_on,
         "last_on": last_on,
+        "this_heading": "Today",
+        "last_heading": "Week to date",
         "this_label": f"Today, {this_on.strftime('%b')} {this_on.day}, {this_on.year}",
         "last_label": f"Week to date from {last_on.strftime('%b')} {last_on.day}, {last_on.year}",
         "this_iso": this_on.isoformat(),
@@ -288,10 +314,6 @@ def members_from_payload(payload: Any) -> list[LiveMember]:
         mid = str(row.get("id") or "").strip()
         if not mid:
             continue
-        try:
-            pts = int(row.get("points") or 0)
-        except (TypeError, ValueError):
-            pts = 0
         phone = str(row.get("phone") or "").strip()
         geo = lookup_phone(phone)
         out.append(
@@ -300,8 +322,7 @@ def members_from_payload(payload: Any) -> list[LiveMember]:
                 square_loyalty_id=mid,
                 square_customer_id=str(row.get("customer_id") or "").strip(),
                 phone=phone,
-                points=pts,
-                lifetime_points=pts,
+                points=_int(row.get("points")),
                 area_code=geo["area_code"],
                 area_metro=geo["area_metro"],
                 area_state=geo["area_state"],
@@ -391,29 +412,30 @@ def filter_members(
 
 
 def live_reports_context(payload: Any | None = None) -> dict[str, Any] | None:
-    raw = fetch_payload(payload=payload)
+    raw = payload if payload is not None else fetch_sales()
     if raw is None:
         return None
     return reports_from_payload(raw)
 
 
 def live_scorecard(payload: Any | None = None) -> dict[str, Any] | None:
-    raw = fetch_payload(payload=payload)
+    raw = payload if payload is not None else fetch_sales()
     if raw is None:
         return None
     return scorecard_from_payload(raw)
 
 
 def live_members(payload: Any | None = None) -> list[LiveMember] | None:
-    """Parse-and-render. None when URL unset. [] when gated, no INGEST_KEY, 401, or fetch error."""
+    """Parse-and-render. None when URL unset. [] when gated, no key, 401, or fetch error."""
     if payload is not None:
         return members_from_payload(payload)
     url = (os.environ.get("GETREPORTS_URL") or "").strip()
     if not url:
         return None
-    if not (os.environ.get("INGEST_KEY") or "").strip():
+    key = (os.environ.get("INGEST_KEY") or "").strip()
+    if not key:
         return []
-    raw = fetch_payload(suffix="/loyalty")
+    raw = fetch_loyalty(key)
     if raw is None:
         return None
     return members_from_payload(raw)

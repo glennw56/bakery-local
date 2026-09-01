@@ -10,7 +10,7 @@
     "count": 2,
     "members": [
       {"id": "LOY_FAKE_1", "points": 150, "phone": "+15555550100", "customer_id": "CUST_FAKE_1"},
-      {"id": "LOY_FAKE_2", "points": 40, "phone": "+12055550101", "customer_id": "CUST_FAKE_2"}
+      {"id": "LOY_FAKE_2", "points": 40, "phone": "+12055550100", "customer_id": "CUST_FAKE_2"}
     ]
   }
 }

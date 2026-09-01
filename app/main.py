@@ -458,6 +458,8 @@ def reports_index(request: Request, db: Session = Depends(get_db)):
             "weekday_tickets": weekday_tickets,
             "weekday_cents": weekday_cents,
             "top_items": top_items,
+            "today_channels": [],
+            "week_channels": [],
             "modifiers_by_drink": modifiers_by_drink,
             "merch": merch,
         },

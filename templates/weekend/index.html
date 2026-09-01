@@ -19,11 +19,11 @@
     <p class="hint">{{ card.this_label }} vs {{ card.last_label }}.</p>
     <div class="summary-pills weekend-pills">
       <div>
-        <span>This Saturday</span>
+        <span>{{ card.this_heading or "This Saturday" }}</span>
         <strong>{{ card.this.tickets }} tickets · {{ card.this.cents|dollars }}</strong>
       </div>
       <div>
-        <span>Last Saturday</span>
+        <span>{{ card.last_heading or "Last Saturday" }}</span>
         <strong>{{ card.last.tickets }} tickets · {{ card.last.cents|dollars }}</strong>
       </div>
     </div>
