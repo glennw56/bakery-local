@@ -246,6 +246,8 @@ body.kds {
   align-content: start;
 }
 .kds-ticket {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(245, 197, 24, 0.25);
   background: #161a20;
   border: 3px solid #f4f1ea;
   border-left-width: 10px;
@@ -255,7 +257,13 @@ body.kds {
   cursor: pointer;
   user-select: none;
 }
-.kds-ticket:hover {
+@media (hover: hover) and (pointer: fine) {
+  .kds-ticket:hover {
+    background: #1e242c;
+    border-color: #f5c518;
+  }
+}
+.kds-ticket:active {
   background: #1e242c;
   border-color: #f5c518;
 }
@@ -468,6 +476,7 @@ body.weekend main { max-width: 96rem; }
   line-height: 1.05;
   color: #f5c518;
 }
+body.kds, body.kds * { touch-action: manipulation; }
 .kds-ding-copy {
   margin: 0;
   font-size: clamp(1.15rem, 3.2vw, 1.8rem);

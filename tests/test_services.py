@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.main import app
 from fastapi.testclient import TestClient
 
@@ -41,3 +43,5 @@ def test_drinks_board_includes_ding_script(monkeypatch) -> None:
     assert "/static/board-ding.js" in page.text
     assert "Tap to turn on the ding" in page.text
     assert "You will not hear new drinks until you do" in page.text
+    assert "apple-mobile-web-app-capable" in page.text
+    assert "/static/ding.wav" in Path("/workspace/bakery-local/static/board-ding.js").read_text()

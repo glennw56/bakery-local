@@ -265,8 +265,14 @@ CLEARED_COOKIE = "kds_cleared"
 CLEARED_MAX = 80
 
 
-def parse_cleared(request: Request) -> list[str]:
-    raw = request.cookies.get(CLEARED_COOKIE) or ""
+def parse_cleared(request: Request, extra: str = "") -> list[str]:
+    raw = ",".join(
+        [
+            request.cookies.get(CLEARED_COOKIE) or "",
+            extra or "",
+            request.query_params.get("cleared") or "",
+        ]
+    )
     out: list[str] = []
     seen: set[str] = set()
     for part in raw.split(","):
@@ -286,8 +292,8 @@ def remember_cleared(response: Response, order_ids: list[str]) -> None:
         CLEARED_COOKIE,
         ",".join(ids),
         max_age=180 * 60,
-        path="/board",
-        httponly=True,
+        path="/",
+        httponly=False,
         samesite="lax",
     )
 
