@@ -251,6 +251,14 @@ def clamp_minutes(minutes: int) -> int:
     return max(1, min(minutes, 180))
 
 
+def default_board_minutes() -> int:
+    # Public getorders board: 3 hours so shop-day drinks still show.
+    # Laptop kitchen board stays 15 minutes.
+    if (os.environ.get("GETORDERS_URL") or "").strip():
+        return 180
+    return 15
+
+
 def tickets_in_window(db: Session, minutes: int) -> list[DrinkTicket]:
     # Newest first. Tap-to-clear deletes the row (see board_ticket_done).
     cutoff = _utc_now() - timedelta(minutes=minutes)
@@ -414,10 +422,10 @@ def weekend_csv(this: str = Query(""), db: Session = Depends(get_db)):
 @app.get("/board", response_class=HTMLResponse)
 def board_page(
     request: Request,
-    minutes: int = Query(15),
+    minutes: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    minutes = clamp_minutes(minutes)
+    minutes = clamp_minutes(default_board_minutes() if minutes is None else minutes)
     from app.getorders import sync_if_configured
 
     sync_if_configured(db)
@@ -435,10 +443,10 @@ def board_page(
 @app.get("/board/tickets", response_class=HTMLResponse)
 def board_tickets(
     request: Request,
-    minutes: int = Query(15),
+    minutes: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    minutes = clamp_minutes(minutes)
+    minutes = clamp_minutes(default_board_minutes() if minutes is None else minutes)
     from app.getorders import sync_if_configured
 
     sync_if_configured(db)
