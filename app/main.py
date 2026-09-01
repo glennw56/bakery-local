@@ -426,16 +426,16 @@ def board_page(
     db: Session = Depends(get_db),
 ):
     minutes = clamp_minutes(default_board_minutes() if minutes is None else minutes)
-    from app.getorders import sync_if_configured
+    from app.getorders import live_ticket_views
 
-    sync_if_configured(db)
-    rows = tickets_in_window(db, minutes)
+    live = live_ticket_views(minutes)
+    tickets = live if live is not None else ticket_views(tickets_in_window(db, minutes))
     return templates.TemplateResponse(
         request,
         "board/index.html",
         {
             "minutes": minutes,
-            "tickets": ticket_views(rows),
+            "tickets": tickets,
         },
     )
 
@@ -447,16 +447,16 @@ def board_tickets(
     db: Session = Depends(get_db),
 ):
     minutes = clamp_minutes(default_board_minutes() if minutes is None else minutes)
-    from app.getorders import sync_if_configured
+    from app.getorders import live_ticket_views
 
-    sync_if_configured(db)
-    rows = tickets_in_window(db, minutes)
+    live = live_ticket_views(minutes)
+    tickets = live if live is not None else ticket_views(tickets_in_window(db, minutes))
     return templates.TemplateResponse(
         request,
         "board/_tickets.html",
         {
             "minutes": minutes,
-            "tickets": ticket_views(rows),
+            "tickets": tickets,
         },
     )
 

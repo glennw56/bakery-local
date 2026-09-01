@@ -1,23 +1,23 @@
-"""Read existing Cloud Run getorders into drink_tickets.
+"""Live getorders → drink board views. No sqlite, no Firestore.
 
-Public drinks board uses this when GETORDERS_URL is set. No Square token.
+Public drinks board fetches this on every refresh when GETORDERS_URL is set.
 Laptop Square ingest is unchanged when GETORDERS_URL is unset.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
-from sqlalchemy.orm import Session
 
-from app.drinks import is_drink, upsert_tickets
+from app.drinks import is_drink
 
 LINE_HEAD = re.compile(r"^\s*(\d+)\s+(.+?)\s*$")
+CHICAGO = ZoneInfo("America/Chicago")
 
 
 def tickets_from_payload(payload: Any) -> list[dict]:
@@ -56,7 +56,7 @@ def tickets_from_payload(payload: Any) -> list[dict]:
                 {
                     "ordered_at": ordered_at,
                     "drink_name": name,
-                    "modifiers_json": json.dumps(mods, ensure_ascii=False),
+                    "modifiers": mods,
                     "qty": max(1, qty),
                     "ticket_name": ticket_name,
                     "source": "getorders",
@@ -79,15 +79,42 @@ def _naive_utc(value: str) -> datetime:
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def sync_if_configured(db: Session) -> tuple[int, int]:
+def live_ticket_views(minutes: int, payload: Any | None = None) -> list[dict] | None:
+    """Parse-and-render. Returns None when GETORDERS_URL is unset (use sqlite)."""
     url = (os.environ.get("GETORDERS_URL") or "").strip()
-    if not url:
-        return 0, 0
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(url)
-            response.raise_for_status()
-            payload = response.json()
-    except Exception:
-        return 0, 0
-    return upsert_tickets(db, tickets_from_payload(payload))
+    if payload is None and not url:
+        return None
+    if payload is None:
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                payload = response.json()
+        except Exception:
+            return []
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=max(1, minutes))
+    now = datetime.now(timezone.utc)
+    views: list[dict] = []
+    for row in tickets_from_payload(payload):
+        ordered = row["ordered_at"]
+        if ordered < cutoff:
+            continue
+        aware = ordered.replace(tzinfo=timezone.utc)
+        age = max(0, int((now - aware).total_seconds() // 60))
+        views.append(
+            {
+                "id": None,
+                "drink_name": row["drink_name"],
+                "qty": row["qty"],
+                "ticket_name": row["ticket_name"],
+                "source": row["source"],
+                "modifiers": row["modifiers"],
+                "clock": aware.astimezone(CHICAGO).strftime("%-I:%M %p"),
+                "age_min": age,
+                "ordered_at": ordered,
+            }
+        )
+    views.sort(key=lambda v: v["ordered_at"], reverse=True)
+    for v in views:
+        v.pop("ordered_at", None)
+    return views

@@ -190,7 +190,7 @@ Two services from this repo. Shop Tech does not `gcloud` or open billing.
 | `bakery-drinks` | `Dockerfile.drinks` | private first, allUsers only after `/board` and `/health` work | `/board`, `/health`, `POST /internal/ingest` |
 | `bakery-desk` | `Dockerfile.desk` | never allUsers | `/`, `/reports`, `/weekend`, `/loyalty`, `/notes` |
 
-`BAKERY_SERVICE=drinks` 404s `/loyalty` (real phones). Public drinks reads `GETORDERS_URL` (existing getorders Cloud Run), not a new Square token. Laptop ingest is unchanged when `GETORDERS_URL` is unset. `INGEST_KEY` and `SQUARE_ACCESS_TOKEN` come from Secret Manager, not git. Header `X-Ingest-Key`. Sqlite on Cloud Run min 0 is ephemeral; laptop still sqlite.
+`BAKERY_SERVICE=drinks` 404s `/loyalty` (real phones). Public drinks fetches `GETORDERS_URL` on every refresh and renders it (no sqlite, no Firestore). Laptop ingest is unchanged when `GETORDERS_URL` is unset. `INGEST_KEY` and `SQUARE_ACCESS_TOKEN` come from Secret Manager, not git. Header `X-Ingest-Key`. Sqlite on Cloud Run min 0 is ephemeral; laptop still sqlite.
 
 Laptop default is unchanged (`BAKERY_SERVICE` unset or `laptop`).
 

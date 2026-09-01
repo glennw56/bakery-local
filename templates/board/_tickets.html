@@ -1,11 +1,11 @@
 {% if tickets %}
   {% for t in tickets %}
   <article class="kds-ticket drink-{{ t.drink_name|lower|replace(' ', '-') }}"
-           title="Tap when done"
-           hx-delete="/board/tickets/{{ t.id }}?minutes={{ minutes }}"
+           title="{% if t.id %}Tap when done{% endif %}"
+           {% if t.id %}hx-delete="/board/tickets/{{ t.id }}?minutes={{ minutes }}"
            hx-target="#ticket-list"
            hx-swap="innerHTML"
-           hx-disabled-elt="this">
+           hx-disabled-elt="this"{% endif %}>
     <header class="kds-ticket-head">
       <time>{{ t.clock }}</time>
       <span class="kds-age">{{ t.age_min }}m</span>
