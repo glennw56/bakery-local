@@ -133,8 +133,11 @@ function makeCard(oid) {
   const el = {
     className: "kds-ticket",
     attrs: { "data-order-id": oid },
+    hidden: false,
+    style: { display: "" },
     parent: null,
     getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null; },
+    setAttribute(k, v) { this.attrs[k] = String(v); },
     closest(sel) {
       if (sel === "#ticket-list .kds-ticket[data-order-id]" || sel === ".kds-ticket[data-order-id]") return this;
       return null;
@@ -160,12 +163,15 @@ function makeList(cards) {
   cards.forEach((c) => { c.parent = list; });
   return list;
 }
-const window = {};
+const window = {
+  addEventListener: (name, fn, opts) => { listeners.push({ name, fn, opts }); },
+};
 let list = makeList([]);
 const document = {
   body: {
     addEventListener: (name, fn, opts) => { listeners.push({ name, fn, opts }); },
   },
+  addEventListener: (name, fn, opts) => { listeners.push({ name, fn, opts }); },
   getElementById: (id) => (id === "ticket-list" ? list : null),
 };
 const localStorage = memory("local");
@@ -201,12 +207,14 @@ if (window.kdsLoadCleared().join(",") !== "ORDER_A,ORDER_B") process.exit(7);
 def test_board_cleared_js_persists_on_tap() -> None:
     script = _CLEARED_JS_HARNESS + r"""
 const card = makeCard("ORDER_TAP");
-list = makeList([card]);
+const keep = makeCard("ORDER_KEEP");
+list = makeList([card, keep]);
 const tap = { target: card };
 listeners.filter((l) => l.name === "pointerup" || l.name === "click").forEach((l) => l.fn(tap));
 if (store.local.kds_cleared !== "ORDER_TAP") process.exit(2);
 if (store.session.kds_cleared !== "ORDER_TAP") process.exit(3);
 if (list.children.length !== 1) process.exit(4);
+if (list.children[0].getAttribute("data-order-id") !== "ORDER_KEEP") process.exit(5);
 """
     js_path = ROOT / "static" / "board-cleared.js"
     result = _run_board_cleared_js(script)
@@ -243,5 +251,31 @@ if (list.children[0].getAttribute("data-order-id") !== "ORDER_KEEP") process.exi
         assert "htmx:afterSwap" in text
         assert "kdsFilterCleared" in text
         assert ".kds-ticket[data-order-id]" in text
+        return
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_board_cleared_js_hides_after_refresh() -> None:
+    script = _CLEARED_JS_HARNESS + r"""
+store.local.kds_cleared = "ORDER_GONE";
+store.session.kds_cleared = "ORDER_GONE";
+list = makeList([makeCard("ORDER_GONE"), makeCard("ORDER_KEEP")]);
+window.kdsFilterCleared();
+if (store.local.kds_cleared !== "ORDER_GONE") process.exit(2);
+if (list.children.length !== 1) process.exit(3);
+if (list.children[0].getAttribute("data-order-id") !== "ORDER_KEEP") process.exit(4);
+const pageshow = listeners.find((l) => l.name === "pageshow");
+if (!pageshow) process.exit(5);
+list = makeList([makeCard("ORDER_GONE"), makeCard("ORDER_KEEP")]);
+pageshow.fn();
+if (list.children.length !== 1) process.exit(6);
+if (list.children[0].getAttribute("data-order-id") !== "ORDER_KEEP") process.exit(7);
+"""
+    js_path = ROOT / "static" / "board-cleared.js"
+    result = _run_board_cleared_js(script)
+    if result is None:
+        text = js_path.read_text(encoding="utf-8")
+        assert "pageshow" in text
+        assert "kdsFilterCleared" in text
         return
     assert result.returncode == 0, result.stderr or result.stdout

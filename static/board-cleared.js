@@ -1,4 +1,4 @@
-/* Persist tap-to-clear on iPad Safari; hide already-cleared tickets after every poll swap. */
+/* Pushed/cleared list is client-owned. If an order_id is in the list, do not show it. */
 (function () {
   const STORE = "kds_cleared";
   const MAX = 80;
@@ -27,6 +27,17 @@
     saveCleared(ids);
   }
 
+  function hideCard(el) {
+    if (!el) return;
+    try {
+      el.hidden = true;
+    } catch (e) {}
+    if (el.setAttribute) el.setAttribute("hidden", "");
+    if (el.style) el.style.display = "none";
+    if (el.remove) el.remove();
+    else if (el.parentNode) el.parentNode.removeChild(el);
+  }
+
   function hideClearedTickets() {
     const list = document.getElementById && document.getElementById("ticket-list");
     if (!list || !list.querySelectorAll) return;
@@ -36,9 +47,7 @@
     for (let i = 0; i < cards.length; i++) {
       const el = cards[i];
       const oid = (el.getAttribute && el.getAttribute("data-order-id")) || "";
-      if (!oid || !ids.has(oid)) continue;
-      if (el.remove) el.remove();
-      else if (el.parentNode) el.parentNode.removeChild(el);
+      if (oid && ids.has(oid)) hideCard(el);
     }
   }
 
@@ -63,7 +72,10 @@
     const t = ev && ev.target;
     const card = t && t.closest && t.closest("#ticket-list .kds-ticket[data-order-id]");
     if (!card) return;
-    addCleared(card.getAttribute("data-order-id"));
+    const oid = card.getAttribute("data-order-id");
+    addCleared(oid);
+    // Hide now (~1s smoke). Do not wait on DELETE / cookie / hx-vals.
+    hideCard(card);
   }
 
   window.kdsRememberCleared = rememberCleared;
@@ -71,10 +83,10 @@
   window.kdsFilterCleared = hideClearedTickets;
 
   if (document.body && document.body.addEventListener) {
-    // Write on tap immediately. Do not remove the card here — HTMX still needs the click to DELETE.
     document.body.addEventListener("pointerup", rememberTap, true);
     document.body.addEventListener("click", rememberTap, true);
 
+    // Server cleared= is optional backup only.
     document.body.addEventListener("htmx:configRequest", function (ev) {
       if (ev.detail && ev.detail.parameters) {
         ev.detail.parameters.cleared = loadCleared().join(",");
@@ -88,10 +100,15 @@
       hideClearedTickets();
     });
 
-    // Must-have: after every #ticket-list swap / poll, hide cards already in the local list.
-    // Do not require ev.detail.target.id — iPad Safari / HTMX detail shape varies.
     document.body.addEventListener("htmx:afterSwap", hideClearedTickets);
     document.body.addEventListener("htmx:afterSettle", hideClearedTickets);
+  }
+
+  if (document.addEventListener) {
+    document.addEventListener("DOMContentLoaded", hideClearedTickets);
+  }
+  if (window.addEventListener) {
+    window.addEventListener("pageshow", hideClearedTickets);
   }
 
   hideClearedTickets();
