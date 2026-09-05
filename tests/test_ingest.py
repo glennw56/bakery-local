@@ -13,7 +13,15 @@ if "BAKERY_DB" not in os.environ:
     os.environ["BAKERY_DB"] = _db
 
 from app.db import SessionLocal, init_db  # noqa: E402
-from app.drinks import is_drink, tickets_from_order, upsert_tickets  # noqa: E402
+from app.drinks import (  # noqa: E402
+    DRINK_CATEGORY_IDS,
+    DRINK_CATEGORY_NAME,
+    _DRINK_NEEDLES,
+    categories_from_line_item,
+    is_drink,
+    tickets_from_order,
+    upsert_tickets,
+)
 from app.models import DrinkTicket  # noqa: E402
 from sqlalchemy import func, select  # noqa: E402
 
@@ -28,7 +36,9 @@ def test_is_drink_classifier() -> None:
     assert is_drink("Coffee Latte")
     assert is_drink("Latte")
     assert is_drink("Matcha")
-    assert is_drink("Biscoff")
+    assert is_drink("Biscoff Coffee")
+    assert not is_drink("Biscoff")
+    assert not is_drink("Biscoff Roll")
     assert is_drink("Taro Boba")
     assert is_drink("Lemonade")
     assert is_drink("Iced Coffee")
@@ -42,6 +52,100 @@ def test_is_drink_classifier() -> None:
     assert not is_drink("Merch")
     assert not is_drink("Wholesale")
     assert not is_drink("Entremet")
+    assert "biscoff" not in _DRINK_NEEDLES
+
+
+def test_is_drink_uses_catalog_category_not_biscoff_needle() -> None:
+    drink_id = next(iter(DRINK_CATEGORY_IDS))
+    assert is_drink(
+        "Biscoff Coffee",
+        category_ids=[drink_id],
+        category_names=[DRINK_CATEGORY_NAME],
+    )
+    assert is_drink("Biscoff Coffee", category_names=["Drink"])
+    assert not is_drink("Biscoff Roll", category_names=["Roll"])
+    assert not is_drink("Biscoff Roll", category_names=["Sweet"])
+    assert not is_drink("Biscoff Roll", category_names=["Heat Up Station"])
+    assert not is_drink("Biscoff Roll", category_names=["Drink Station"])
+    assert not is_drink("Biscoff Coffee", category_names=["Drink Station"])
+    assert is_drink("Anything", category_ids=[drink_id])
+
+
+def test_tickets_from_order_keeps_biscoff_coffee_drops_biscoff_roll() -> None:
+    drink_id = next(iter(DRINK_CATEGORY_IDS))
+    order = {
+        "id": "ORDER_BISCOFF_MIX",
+        "source": {"name": "Point of Sale"},
+        "line_items": [
+            {
+                "uid": "LINE_ROLL",
+                "name": "Biscoff Roll",
+                "quantity": "1",
+                "categories": [{"id": "CAT_ROLL", "name": "Roll"}],
+            },
+            {
+                "uid": "LINE_SWEET",
+                "name": "Biscoff Roll",
+                "quantity": "1",
+                "category": {"name": "Sweet"},
+            },
+            {
+                "uid": "LINE_HEAT",
+                "name": "Biscoff Roll",
+                "quantity": "1",
+                "category_id": "HEATUPSTATION1",
+                "category": {"name": "Heat Up Station"},
+            },
+            {
+                "uid": "LINE_COFFEE",
+                "name": "Biscoff Coffee",
+                "variation_name": "Regular",
+                "quantity": "1",
+                "categories": [{"id": drink_id, "name": DRINK_CATEGORY_NAME}],
+            },
+            {
+                "uid": "LINE_COFFEE_NAME_ONLY",
+                "name": "Biscoff Coffee",
+                "quantity": "1",
+            },
+            {
+                "uid": "LINE_ROLL_NAME_ONLY",
+                "name": "Biscoff Roll",
+                "quantity": "1",
+            },
+        ],
+    }
+    payment = {
+        "created_at": "2026-09-05T15:00:00Z",
+        "source_type": "CARD",
+        "application_details": {"square_product": "SQUARE_POS"},
+        "order_id": "ORDER_BISCOFF_MIX",
+    }
+    rows = tickets_from_order(order, payment)
+    names = [row["drink_name"] for row in rows]
+    assert names == ["Biscoff Coffee", "Biscoff Coffee"]
+    assert {row["square_line_uid"] for row in rows} == {
+        "LINE_COFFEE",
+        "LINE_COFFEE_NAME_ONLY",
+    }
+
+
+def test_categories_from_line_item_reads_nested_catalog() -> None:
+    drink_id = next(iter(DRINK_CATEGORY_IDS))
+    ids, names = categories_from_line_item(
+        {
+            "name": "Biscoff Coffee",
+            "catalog_object": {
+                "item_data": {
+                    "category_id": drink_id,
+                    "categories": [{"id": drink_id, "ordinal": 0}],
+                    "reporting_category": {"id": drink_id, "name": "Drink"},
+                }
+            },
+        }
+    )
+    assert drink_id in ids
+    assert "Drink" in names
 
 
 def test_fixture_maps_one_drink_skips_pastry() -> None:

@@ -8,6 +8,7 @@ calls Square; it HTMX-polls local sqlite.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,7 +17,20 @@ from sqlalchemy.orm import Session
 
 from app.models import DrinkIngestSeen, DrinkTicket
 
-# True if the line name contains any of these (casefold), after skip rules.
+# Square Catalog Drink category ids seen live. Exact name "Drink" only —
+# not "Drink Station". Do not treat "biscoff" as a drink name needle
+# (that catches Biscoff Roll, which is Roll / Sweet / Heat Up Station).
+DRINK_CATEGORY_IDS = frozenset(
+    {
+        "BYKQS3P2SI7WP22F6BWKFZGR",
+        "OCV6MHUVAXUXXXFATFKLJNPI",
+        "ROPXOXPWBYM42T3LJQESG3NX",
+    }
+)
+DRINK_CATEGORY_NAME = "Drink"
+
+# Name fallback when the line has no Catalog category (getreports mix,
+# getorders payload, older fixtures). No "biscoff" needle.
 _DRINK_NEEDLES = (
     "milk tea",
     "fruit tea",
@@ -25,7 +39,6 @@ _DRINK_NEEDLES = (
     "coffee latte",
     "latte",
     "matcha",
-    "biscoff",
     "boba",
     "lemonade",
     "coffee",
@@ -41,8 +54,32 @@ _NOT_DRINK = (
 )
 
 
-def is_drink(name: str | None) -> bool:
-    """True for drink-like item names; pastry / merch / entremets are not drinks."""
+def _clean_ids(values: Iterable[str] | None) -> set[str]:
+    return {str(v).strip() for v in (values or []) if str(v).strip()}
+
+
+def _clean_names(values: Iterable[str] | None) -> list[str]:
+    return [str(v).strip() for v in (values or []) if str(v).strip()]
+
+
+def is_drink(
+    name: str | None,
+    category_ids: Iterable[str] | None = None,
+    category_names: Iterable[str] | None = None,
+) -> bool:
+    """True for Square Drink-category lines.
+
+    Prefer Catalog membership: id in DRINK_CATEGORY_IDS or exact name
+    "Drink". When category is present and is not Drink, the line is not
+    a drink (Biscoff Roll). Name needles are fallback only.
+    """
+    ids = _clean_ids(category_ids)
+    names = _clean_names(category_names)
+    if ids or names:
+        if ids & DRINK_CATEGORY_IDS:
+            return True
+        return any(n == DRINK_CATEGORY_NAME or n.casefold() == "drink" for n in names)
+
     n = (name or "").casefold()
     if not n.strip():
         return False
@@ -55,6 +92,66 @@ def is_drink(name: str | None) -> bool:
         if snip in n:
             return False
     return any(needle in n for needle in _DRINK_NEEDLES)
+
+
+def _add_category(obj: object, ids: list[str], names: list[str]) -> None:
+    if isinstance(obj, str):
+        text = obj.strip()
+        if not text:
+            return
+        if text.casefold() == "drink" or " " in text or len(text) < 16:
+            names.append(text)
+        else:
+            ids.append(text)
+        return
+    if not isinstance(obj, dict):
+        return
+    cid = obj.get("id") or obj.get("category_id") or obj.get("catalog_category_id")
+    if cid:
+        ids.append(str(cid).strip())
+    cname = obj.get("name") or obj.get("category_name")
+    if cname:
+        names.append(str(cname).strip())
+
+
+def categories_from_line_item(item: dict | None) -> tuple[list[str], list[str]]:
+    """Pull Catalog category ids/names off a Square order line (several shapes)."""
+    ids: list[str] = []
+    names: list[str] = []
+    raw = item if isinstance(item, dict) else {}
+
+    for key in ("category_id", "catalog_category_id"):
+        val = raw.get(key)
+        if val:
+            ids.append(str(val).strip())
+
+    cat = raw.get("category")
+    if cat:
+        _add_category(cat, ids, names)
+
+    for key in ("category_ids", "categories", "catalog_categories"):
+        block = raw.get(key)
+        if isinstance(block, list):
+            for entry in block:
+                _add_category(entry, ids, names)
+        elif block:
+            _add_category(block, ids, names)
+
+    for blob in (raw.get("catalog_object"), raw.get("item_data")):
+        if not isinstance(blob, dict):
+            continue
+        data = blob.get("item_data") if isinstance(blob.get("item_data"), dict) else blob
+        if not isinstance(data, dict):
+            continue
+        if data.get("category_id"):
+            ids.append(str(data["category_id"]).strip())
+        for entry in data.get("categories") or []:
+            _add_category(entry, ids, names)
+        reporting = data.get("reporting_category")
+        if reporting:
+            _add_category(reporting, ids, names)
+
+    return [x for x in ids if x], [x for x in names if x]
 
 
 def _naive_utc(value: str | None) -> datetime:
@@ -112,7 +209,8 @@ def tickets_from_order(order_dict: dict, payment_dict: dict) -> list[dict]:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or "").strip()
-        if not is_drink(name):
+        cat_ids, cat_names = categories_from_line_item(item)
+        if not is_drink(name, category_ids=cat_ids, category_names=cat_names):
             continue
         mods = []
         for mod in item.get("modifiers") or []:

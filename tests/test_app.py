@@ -93,6 +93,21 @@ def test_board_newest_first_and_click_clears() -> None:
     assert f"/board/orders/{first_id}" not in remaining.text
 
 
+def test_board_clear_persist_hooks() -> None:
+    from scripts.seed_demo import main as seed_main
+
+    seed_main()
+    page = client.get("/board")
+    assert page.status_code == 200
+    assert "/static/board-cleared.js" in page.text
+    assert "kds_cleared" in page.text
+    assert 'hx-vals=\'js:{"cleared":' in page.text
+    tickets = client.get("/board/tickets")
+    assert tickets.status_code == 200
+    assert "kdsRememberCleared" in tickets.text
+    assert "hx-on::after-request" in tickets.text
+
+
 def test_loyalty_ok() -> None:
     response = client.get("/loyalty")
     assert response.status_code == 200

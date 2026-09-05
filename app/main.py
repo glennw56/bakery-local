@@ -352,10 +352,15 @@ def remember_cleared(response: Response, order_ids: list[str]) -> None:
     )
 
 
-def board_orders(request: Request, db: Session, minutes: int) -> list[dict]:
+def board_orders(
+    request: Request,
+    db: Session,
+    minutes: int,
+    extra_cleared: str = "",
+) -> list[dict]:
     from app.getorders import group_order_views, live_order_views
 
-    live = live_order_views(minutes, cleared=parse_cleared(request))
+    live = live_order_views(minutes, cleared=parse_cleared(request, extra=extra_cleared))
     if live is not None:
         return live
     return group_order_views(ticket_views(tickets_in_window(db, minutes)))
@@ -555,6 +560,7 @@ def weekend_csv(this: str = Query(""), db: Session = Depends(get_db)):
 def board_page(
     request: Request,
     minutes: int | None = Query(None),
+    cleared: str = Query(""),
     db: Session = Depends(get_db),
 ):
     minutes = clamp_minutes(default_board_minutes() if minutes is None else minutes)
@@ -563,7 +569,7 @@ def board_page(
         "board/index.html",
         {
             "minutes": minutes,
-            "orders": board_orders(request, db, minutes),
+            "orders": board_orders(request, db, minutes, extra_cleared=cleared),
             "ding_new": bakery_service() == "drinks" or bool((os.environ.get("GETORDERS_URL") or "").strip()),
         },
     )
@@ -573,6 +579,7 @@ def board_page(
 def board_tickets(
     request: Request,
     minutes: int | None = Query(None),
+    cleared: str = Query(""),
     db: Session = Depends(get_db),
 ):
     minutes = clamp_minutes(default_board_minutes() if minutes is None else minutes)
@@ -581,7 +588,7 @@ def board_tickets(
         "board/_tickets.html",
         {
             "minutes": minutes,
-            "orders": board_orders(request, db, minutes),
+            "orders": board_orders(request, db, minutes, extra_cleared=cleared),
         },
     )
 
