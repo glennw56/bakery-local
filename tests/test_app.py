@@ -103,10 +103,14 @@ def test_board_clear_persist_hooks() -> None:
     assert "kds_cleared" in page.text
     assert 'hx-vals=\'js:{"cleared":' in page.text
     assert "kdsFilterCleared" in page.text
+    assert "kdsFilterIncoming" in page.text
+    assert "hx-on::before-swap" in page.text
     assert "hx-on::after-swap" in page.text
     tickets = client.get("/board/tickets")
     assert tickets.status_code == 200
     assert "kdsRememberCleared" in tickets.text
+    assert "kdsFilterIncoming" in tickets.text
+    assert "hx-on::before-swap" in tickets.text
     assert "hx-on::after-request" in tickets.text
 
 

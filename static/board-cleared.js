@@ -51,6 +51,81 @@
     }
   }
 
+  function escapeRe(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function stripClearedFromHtml(html) {
+    if (typeof html !== "string" || !html) return html;
+    const ids = loadCleared();
+    if (!ids.length) return html;
+    const set = new Set(ids);
+
+    if (typeof DOMParser !== "undefined") {
+      try {
+        const doc = new DOMParser().parseFromString(
+          '<div id="__kds_frag">' + html + "</div>",
+          "text/html"
+        );
+        const wrap = doc.getElementById("__kds_frag");
+        if (wrap && wrap.querySelectorAll) {
+          const cards = wrap.querySelectorAll(".kds-ticket[data-order-id]");
+          for (let i = 0; i < cards.length; i++) {
+            const oid = (cards[i].getAttribute && cards[i].getAttribute("data-order-id")) || "";
+            if (oid && set.has(oid)) {
+              if (cards[i].remove) cards[i].remove();
+              else if (cards[i].parentNode) cards[i].parentNode.removeChild(cards[i]);
+            }
+          }
+          return wrap.innerHTML;
+        }
+      } catch (e) {}
+    }
+
+    let out = html;
+    for (let i = 0; i < ids.length; i++) {
+      const re = new RegExp(
+        "<article\\b(?=[^>]*\\bkds-ticket\\b)(?=[^>]*\\bdata-order-id=[\"']" +
+          escapeRe(ids[i]) +
+          "[\"'])[^>]*>[\\s\\S]*?<\\/article>",
+        "gi"
+      );
+      out = out.replace(re, "");
+    }
+    return out;
+  }
+
+  function ticketListSwap(ev) {
+    const d = ev && ev.detail;
+    if (!d) return false;
+    const target = d.target;
+    if (target) {
+      if (target.id === "ticket-list") return true;
+      if (target.getAttribute && target.getAttribute("id") === "ticket-list") return true;
+    }
+    const elt = d.elt || (ev && ev.target);
+    if (elt && elt.id === "ticket-list") return true;
+    if (elt && elt.closest && elt.closest("#ticket-list")) return true;
+    return typeof d.serverResponse === "string" && d.serverResponse.indexOf("kds-ticket") !== -1;
+  }
+
+  function incomingHtml(ev) {
+    const d = ev && ev.detail;
+    if (!d) return "";
+    if (typeof d.serverResponse === "string") return d.serverResponse;
+    const xhr = d.xhr;
+    if (xhr && typeof xhr.responseText === "string") return xhr.responseText;
+    if (xhr && typeof xhr.response === "string") return xhr.response;
+    return "";
+  }
+
+  function filterBeforeInsert(ev) {
+    if (!ticketListSwap(ev)) return;
+    const html = incomingHtml(ev);
+    if (!html) return;
+    ev.detail.serverResponse = stripClearedFromHtml(html);
+  }
+
   function rememberCleared(oid) {
     addCleared(oid);
     hideClearedTickets();
@@ -81,6 +156,8 @@
   window.kdsRememberCleared = rememberCleared;
   window.kdsLoadCleared = loadCleared;
   window.kdsFilterCleared = hideClearedTickets;
+  window.kdsStripClearedHtml = stripClearedFromHtml;
+  window.kdsFilterIncoming = filterBeforeInsert;
 
   if (document.body && document.body.addEventListener) {
     document.body.addEventListener("pointerup", rememberTap, true);
@@ -100,6 +177,8 @@
       hideClearedTickets();
     });
 
+    // Filter incoming poll/delete HTML before HTMX inserts it (no bounce).
+    document.body.addEventListener("htmx:beforeSwap", filterBeforeInsert);
     document.body.addEventListener("htmx:afterSwap", hideClearedTickets);
     document.body.addEventListener("htmx:afterSettle", hideClearedTickets);
   }

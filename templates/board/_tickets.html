@@ -7,6 +7,7 @@
            hx-target="#ticket-list"
            hx-swap="innerHTML"
            hx-disabled-elt="this"
+           hx-on::before-swap="if(window.kdsFilterIncoming) window.kdsFilterIncoming(event)"
            hx-on::after-request="if(event.detail.successful && window.kdsRememberCleared) window.kdsRememberCleared(this.getAttribute('data-order-id'))">
     <header class="kds-ticket-head">
       <time>{{ o.clock }}</time>

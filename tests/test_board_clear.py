@@ -255,6 +255,63 @@ if (list.children[0].getAttribute("data-order-id") !== "ORDER_KEEP") process.exi
     assert result.returncode == 0, result.stderr or result.stdout
 
 
+def test_board_cleared_js_strips_cleared_ids_before_insert() -> None:
+    script = _CLEARED_JS_HARNESS + r"""
+store.local.kds_cleared = "ORDER_GONE";
+store.session.kds_cleared = "ORDER_GONE";
+const incoming = [
+  '<article class="kds-ticket drink-matcha"',
+  '         data-order-id="ORDER_GONE"',
+  '         title="Tap when done">',
+  "<header><time>1:00</time></header>",
+  "</article>",
+  '<article class="kds-ticket drink-coffee"',
+  '         data-order-id="ORDER_KEEP"',
+  '         title="Tap when done">',
+  "<header><time>2:00</time></header>",
+  "</article>",
+].join("\n");
+if (typeof window.kdsStripClearedHtml !== "function") process.exit(2);
+const stripped = window.kdsStripClearedHtml(incoming);
+if (stripped.indexOf("ORDER_GONE") !== -1) process.exit(3);
+if (stripped.indexOf("ORDER_KEEP") === -1) process.exit(4);
+if (stripped.indexOf("kds-ticket") === -1) process.exit(5);
+const ev = {
+  detail: {
+    target: { id: "ticket-list" },
+    serverResponse: incoming,
+    xhr: { responseText: incoming, response: incoming },
+  },
+};
+const before = listeners.find((l) => l.name === "htmx:beforeSwap");
+if (!before) process.exit(6);
+before.fn(ev);
+if (ev.detail.serverResponse.indexOf("ORDER_GONE") !== -1) process.exit(7);
+if (ev.detail.serverResponse.indexOf("ORDER_KEEP") === -1) process.exit(8);
+if (ev.detail.serverResponse === incoming) process.exit(9);
+if (typeof window.kdsFilterIncoming !== "function") process.exit(10);
+const ev2 = {
+  detail: {
+    target: { id: "ticket-list" },
+    serverResponse: incoming,
+  },
+};
+window.kdsFilterIncoming(ev2);
+if (ev2.detail.serverResponse.indexOf("ORDER_GONE") !== -1) process.exit(11);
+if (ev2.detail.serverResponse.indexOf("ORDER_KEEP") === -1) process.exit(12);
+"""
+    js_path = ROOT / "static" / "board-cleared.js"
+    result = _run_board_cleared_js(script)
+    if result is None:
+        text = js_path.read_text(encoding="utf-8")
+        assert "htmx:beforeSwap" in text
+        assert "serverResponse" in text
+        assert "kdsStripClearedHtml" in text
+        assert "kdsFilterIncoming" in text
+        return
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
 def test_board_cleared_js_hides_after_refresh() -> None:
     script = _CLEARED_JS_HARNESS + r"""
 store.local.kds_cleared = "ORDER_GONE";
