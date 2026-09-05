@@ -65,6 +65,24 @@ def test_groups_two_drinks_one_order() -> None:
     assert names == ["Matcha Latte", "Vietnamese Coffee"]
 
 
+def test_getorders_keeps_biscoff_coffee_drops_biscoff_roll() -> None:
+    payload = [
+        [
+            "2026-09-05T18:50:44.246Z",
+            "ORDER_BISCOFF_DRINK",
+            ["1 Biscoff Coffee ", "Milk Oat milk"],
+        ],
+        [
+            "2026-09-05T18:12:19.110Z",
+            "ORDER_BISCOFF_ROLL",
+            ["1 Biscoff Roll "],
+        ],
+    ]
+    rows = tickets_from_payload(payload)
+    assert [row["drink_name"] for row in rows] == ["Biscoff Coffee"]
+    assert rows[0]["square_order_id"] == "ORDER_BISCOFF_DRINK"
+
+
 def test_cleared_order_hidden() -> None:
     payload = [
         [

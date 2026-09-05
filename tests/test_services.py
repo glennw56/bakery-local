@@ -44,4 +44,6 @@ def test_drinks_board_includes_ding_script(monkeypatch) -> None:
     assert "Tap to turn on the ding" in page.text
     assert "You will not hear new drinks until you do" in page.text
     assert "apple-mobile-web-app-capable" in page.text
-    assert "/static/ding.wav" in Path("/workspace/bakery-local/static/board-ding.js").read_text()
+    assert "/static/board-cleared.js" in page.text
+    ding_js = Path(__file__).resolve().parents[1] / "static" / "board-ding.js"
+    assert "/static/ding.wav" in ding_js.read_text()

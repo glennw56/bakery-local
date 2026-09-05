@@ -6,7 +6,8 @@
            hx-delete="/board/orders/{{ o.order_id }}?minutes={{ minutes }}"
            hx-target="#ticket-list"
            hx-swap="innerHTML"
-           hx-disabled-elt="this">
+           hx-disabled-elt="this"
+           hx-on::after-request="if(event.detail.successful && window.kdsRememberCleared) window.kdsRememberCleared(this.getAttribute('data-order-id'))">
     <header class="kds-ticket-head">
       <time>{{ o.clock }}</time>
       <span class="kds-age">{{ o.age_min }}m</span>

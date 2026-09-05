@@ -32,6 +32,10 @@
   }
 
   function addCleared(oid) {
+    if (window.kdsRememberCleared) {
+      window.kdsRememberCleared(oid);
+      return;
+    }
     if (!oid) return;
     const ids = loadCleared();
     if (ids.indexOf(oid) === -1) ids.push(oid);
@@ -125,8 +129,15 @@
     const match = path.match(/\/board\/orders\/([^?]+)/);
     if (match) addCleared(decodeURIComponent(match[1]));
     if (ev.detail && ev.detail.parameters) {
-      ev.detail.parameters.cleared = loadCleared().join(",");
+      ev.detail.parameters.cleared = (window.kdsLoadCleared ? window.kdsLoadCleared() : loadCleared()).join(",");
     }
+  });
+
+  document.body.addEventListener("htmx:afterRequest", function (ev) {
+    if (!ev.detail || !ev.detail.successful) return;
+    const elt = ev.detail.elt;
+    const oid = elt && elt.getAttribute && elt.getAttribute("data-order-id");
+    if (oid) addCleared(oid);
   });
 
   document.body.addEventListener("htmx:afterSwap", function (ev) {

@@ -58,7 +58,7 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 3. On the tablet, open `http://192.168.1.20:8000/board`.
 4. Add to Home Screen if you want. Keep the tablet plugged in, brightness up, auto-lock off.
 
-`?minutes=15` is the default window. Newest tickets sit first. Tap a ticket when the drink is done and it drops off. The list refreshes every 10 seconds.
+`?minutes=15` is the default window. Newest tickets sit first. Tap a ticket when the drink is done and it drops off. The list refreshes every 10 seconds. Only Square **Drink** category lines belong on the board (category ids `BYKQS3P2SI7WP22F6BWKFZGR`, `OCV6MHUVAXUXXXFATFKLJNPI`, `ROPXOXPWBYM42T3LJQESG3NX`, or exact category name `Drink` — not Drink Station). A name needle of `biscoff` is not used; that was putting Biscoff Roll on the board. Tap-to-clear writes `kds_cleared` to localStorage and sessionStorage (cookie is backup) so the 10s poll keeps the ticket off on iPad Safari.
 
 
 ## Live drink ingest
@@ -199,6 +199,8 @@ Two services from this repo. Shop Tech does not `gcloud` or open billing.
 Desk login reuses the bakery-apply email + password form (`GET`/`POST /login`, `POST /logout`). Expected email is `glenn.will799@gmail.com` (hardcoded, not a secret). Password is `ADMIN_PASSWORD` from Glenn Secret Manager — never git, never the image, never logs. Session is an httponly HMAC cookie, not the password. `/health` stays open for Cloud Run. `/`, `/reports`, `/weekend`, `/loyalty` (and csv/detail) stay behind login. Laptop with `ADMIN_PASSWORD` unset stays unlocked. `BAKERY_SERVICE=drinks` does **not** get this gate (`/board` stays public; `/loyalty` still 404s). If desk is missing `ADMIN_PASSWORD`, show login that cannot succeed (fail closed).
 
 Laptop default is unchanged (`BAKERY_SERVICE` unset or `laptop`).
+
+**Glenn / getorders redeploy:** Cloud Run `getorders` is a separate service. bakery-local laptop ingest and `/board` already use the Drink-category rule in `app/drinks.py` (`is_drink` + `categories_from_line_item`). If getorders still filters with a `biscoff` name needle, Biscoff Roll can still enter the public payload. bakery-local drops it on render when the name has no Drink category, but getorders should use the same rule — Catalog category id in the Drink allowlist or exact name `Drink`, not a name needle — and be redeployed on its own. Do not put Square tokens in git.
 
 ## Optional Docker
 
