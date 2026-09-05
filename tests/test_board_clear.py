@@ -312,6 +312,60 @@ if (ev2.detail.serverResponse.indexOf("ORDER_KEEP") === -1) process.exit(12);
     assert result.returncode == 0, result.stderr or result.stdout
 
 
+def test_board_cleared_js_strips_rendered_ticket_html(monkeypatch) -> None:
+    import json
+
+    payload = [
+        [
+            _recent_iso(10),
+            "ORDER_GONE",
+            ["1 Matcha Latte ", "Matcha Option Strawberry Matcha"],
+        ],
+        [
+            _recent_iso(8),
+            "ORDER_KEEP",
+            ["1 Vietnamese Coffee ", "Sweet Level 25%"],
+        ],
+    ]
+    monkeypatch.setenv("GETORDERS_URL", "https://example.test/getorders")
+    monkeypatch.setattr("httpx.Client", _FakeClient)
+    _FakeClient.payload = payload
+
+    from app.main import app
+
+    html = TestClient(app).get("/board/tickets?minutes=180").text
+    assert 'data-order-id="ORDER_GONE"' in html
+    assert 'data-order-id="ORDER_KEEP"' in html
+    script = _CLEARED_JS_HARNESS + f"""
+store.local.kds_cleared = "ORDER_GONE";
+store.session.kds_cleared = "ORDER_GONE";
+const incoming = {json.dumps(html)};
+if (incoming.indexOf('data-order-id="ORDER_GONE"') === -1) process.exit(2);
+if (incoming.indexOf('data-order-id="ORDER_KEEP"') === -1) process.exit(3);
+const ev = {{
+  detail: {{
+    target: {{ id: "ticket-list" }},
+    serverResponse: incoming,
+    xhr: {{ responseText: incoming }},
+  }},
+}};
+const before = listeners.find((l) => l.name === "htmx:beforeSwap");
+if (!before) process.exit(4);
+before.fn(ev);
+if (ev.detail.serverResponse.indexOf('data-order-id="ORDER_GONE"') !== -1) process.exit(5);
+if (ev.detail.serverResponse.indexOf('data-order-id="ORDER_KEEP"') === -1) process.exit(6);
+if (ev.detail.serverResponse.indexOf("kds-ticket") === -1) process.exit(7);
+"""
+    js_path = ROOT / "static" / "board-cleared.js"
+    result = _run_board_cleared_js(script)
+    if result is None:
+        text = js_path.read_text(encoding="utf-8")
+        assert "htmx:beforeSwap" in text
+        assert "kdsStripClearedHtml" in text
+        return
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
 def test_board_cleared_js_hides_after_refresh() -> None:
     script = _CLEARED_JS_HARNESS + r"""
 store.local.kds_cleared = "ORDER_GONE";
