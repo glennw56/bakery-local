@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 if "BAKERY_DB" not in os.environ:
@@ -44,15 +45,20 @@ class _FakeClient:
         return _FakeResp(self.payload)
 
 
+def _recent_iso(minutes_ago: int) -> str:
+    when = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    return when.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
 def test_board_tickets_reads_cleared_query(monkeypatch) -> None:
     payload = [
         [
-            "2026-09-05T18:50:44.246Z",
+            _recent_iso(10),
             "ORDER_KEEP",
             ["1 Matcha Latte ", "Matcha Option Strawberry Matcha"],
         ],
         [
-            "2026-09-05T18:12:19.110Z",
+            _recent_iso(20),
             "ORDER_CLEAR_ME",
             ["1 Vietnamese Coffee ", "Sweet Level 25%"],
         ],
@@ -78,7 +84,7 @@ def test_board_tickets_reads_cleared_query(monkeypatch) -> None:
 def test_delete_order_sets_cleared_cookie(monkeypatch) -> None:
     payload = [
         [
-            "2026-09-05T18:50:44.246Z",
+            _recent_iso(8),
             "ORDER_COOKIE",
             ["1 Milk Tea ", "Flavor Taro"],
         ]
@@ -164,7 +170,7 @@ const document = {
 };
 const localStorage = memory("local");
 const sessionStorage = memory("session");
-const src = fs.readFileSync(process.argv[1], "utf8");
+const src = fs.readFileSync(process.argv[2], "utf8");
 eval(src);
 """
 
