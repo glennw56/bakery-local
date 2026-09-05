@@ -37,7 +37,8 @@
            hx-get="/board/tickets?minutes={{ minutes }}"
            hx-trigger="every 10s"
            hx-vals='js:{"cleared": (localStorage.getItem("kds_cleared") || sessionStorage.getItem("kds_cleared") || "")}'
-           hx-swap="innerHTML">
+           hx-swap="innerHTML"
+           hx-on::after-swap="if(window.kdsFilterCleared) window.kdsFilterCleared()">
     {% include "board/_tickets.html" %}
   </section>
   <script src="/static/board-cleared.js"></script>

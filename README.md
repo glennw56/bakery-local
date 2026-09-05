@@ -58,7 +58,7 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 3. On the tablet, open `http://192.168.1.20:8000/board`.
 4. Add to Home Screen if you want. Keep the tablet plugged in, brightness up, auto-lock off.
 
-`?minutes=15` is the default window. Newest tickets sit first. Tap a ticket when the drink is done and it drops off. The list refreshes every 10 seconds. Only Square **Drink** category lines belong on the board (category ids `BYKQS3P2SI7WP22F6BWKFZGR`, `OCV6MHUVAXUXXXFATFKLJNPI`, `ROPXOXPWBYM42T3LJQESG3NX`, or exact category name `Drink` — not Drink Station). A name needle of `biscoff` is not used; that was putting Biscoff Roll on the board. Tap-to-clear writes `kds_cleared` to localStorage and sessionStorage (cookie is backup) so the 10s poll keeps the ticket off on iPad Safari.
+`?minutes=15` is the default window. Newest tickets sit first. Tap a ticket when the drink is done and it drops off. The list refreshes every 10 seconds. Only Square **Drink** category lines belong on the board (category ids `BYKQS3P2SI7WP22F6BWKFZGR`, `OCV6MHUVAXUXXXFATFKLJNPI`, `ROPXOXPWBYM42T3LJQESG3NX`, or exact category name `Drink` — not Drink Station). A name needle of `biscoff` is not used; that was putting Biscoff Roll on the board. Tap-to-clear writes `kds_cleared` to localStorage and sessionStorage (cookie is backup). After every `#ticket-list` swap the client also hides any `.kds-ticket` whose `data-order-id` is already in that list, so a 10s poll cannot bounce a cleared ticket back even if the server HTML still includes it.
 
 
 ## Live drink ingest
