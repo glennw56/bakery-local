@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.getorders import tickets_from_payload
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "sample_getorders.json"
+
+
+def _recent(minutes_ago: int = 5) -> str:
+    dt = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def test_getorders_maps_milk_tea_skips_pastry() -> None:
@@ -29,6 +35,7 @@ def test_getorders_maps_milk_tea_skips_pastry() -> None:
 
 def test_live_views_parse_and_render_no_id() -> None:
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    payload[0][0] = _recent(10)
     from app.getorders import live_ticket_views
 
     views = live_ticket_views(24 * 60, payload=payload)
@@ -49,7 +56,7 @@ def test_live_views_unset_returns_none(monkeypatch) -> None:
 def test_groups_two_drinks_one_order() -> None:
     payload = [
         [
-            "2026-09-01T18:50:44.246Z",
+            _recent(8),
             "ORDER_GROUP_1",
             ["1 Matcha Latte ", "Matcha Option Strawberry Matcha"],
             ["1 Vietnamese Coffee ", "Sweet Level 25%"],
@@ -86,12 +93,12 @@ def test_getorders_keeps_biscoff_coffee_drops_biscoff_roll() -> None:
 def test_cleared_order_hidden() -> None:
     payload = [
         [
-            "2026-09-01T18:50:44.246Z",
+            _recent(8),
             "ORDER_GROUP_1",
             ["1 Matcha Latte ", "Matcha Option Strawberry Matcha"],
         ],
         [
-            "2026-09-01T18:12:19.110Z",
+            _recent(20),
             "ORDER_GROUP_2",
             ["1 Vietnamese Coffee ", "Sweet Level 25%"],
         ],

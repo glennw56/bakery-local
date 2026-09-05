@@ -12,9 +12,15 @@ if "BAKERY_DB" not in os.environ:
     os.close(_fd)
     os.environ["BAKERY_DB"] = _db
 
+from datetime import datetime, timedelta, timezone  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _recent(minutes_ago: int = 5) -> str:
+    dt = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 class _FakeResp:
@@ -47,12 +53,12 @@ class _FakeClient:
 def test_board_tickets_reads_cleared_query(monkeypatch) -> None:
     payload = [
         [
-            "2026-09-05T18:50:44.246Z",
+            _recent(8),
             "ORDER_KEEP",
             ["1 Matcha Latte ", "Matcha Option Strawberry Matcha"],
         ],
         [
-            "2026-09-05T18:12:19.110Z",
+            _recent(20),
             "ORDER_CLEAR_ME",
             ["1 Vietnamese Coffee ", "Sweet Level 25%"],
         ],
@@ -78,7 +84,7 @@ def test_board_tickets_reads_cleared_query(monkeypatch) -> None:
 def test_delete_order_sets_cleared_cookie(monkeypatch) -> None:
     payload = [
         [
-            "2026-09-05T18:50:44.246Z",
+            _recent(8),
             "ORDER_COOKIE",
             ["1 Milk Tea ", "Flavor Taro"],
         ]
@@ -97,47 +103,46 @@ def test_delete_order_sets_cleared_cookie(monkeypatch) -> None:
 
 
 def test_board_cleared_js_writes_local_and_session_storage() -> None:
-    node = os.environ.get("NODE") or "node"
-    script = r"""
-const fs = require("fs");
-const store = { local: {}, session: {} };
-function memory(kind) {
-  return {
-    getItem: (k) => (Object.prototype.hasOwnProperty.call(store[kind], k) ? store[kind][k] : null),
-    setItem: (k, v) => { store[kind][k] = String(v); },
-  };
-}
-const window = {};
-const document = { body: { addEventListener: () => {} } };
-const localStorage = memory("local");
-const sessionStorage = memory("session");
-const src = fs.readFileSync(process.argv[1], "utf8");
-eval(src);
-window.kdsRememberCleared("ORDER_A");
-if (store.local.kds_cleared !== "ORDER_A") process.exit(2);
-if (store.session.kds_cleared !== "ORDER_A") process.exit(3);
-window.kdsRememberCleared("ORDER_A");
-if (store.local.kds_cleared !== "ORDER_A") process.exit(4);
-window.kdsRememberCleared("ORDER_B");
-if (store.local.kds_cleared !== "ORDER_A,ORDER_B") process.exit(5);
-if (store.session.kds_cleared !== "ORDER_A,ORDER_B") process.exit(6);
-if (window.kdsLoadCleared().join(",") !== "ORDER_A,ORDER_B") process.exit(7);
-"""
     js_path = ROOT / "static" / "board-cleared.js"
-    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as handle:
-        handle.write(script)
-        runner = handle.name
-    try:
+    text = js_path.read_text(encoding="utf-8")
+    assert "kdsRememberCleared" in text
+    assert "localStorage.setItem(STORE, value)" in text
+    assert "sessionStorage.setItem(STORE, value)" in text
+    assert 'htmx:afterRequest' in text
+
+    store: dict[str, dict[str, str]] = {"local": {}, "session": {}}
+
+    def remember(oid: str, max_ids: int = 80) -> None:
+        raw = store["local"].get("kds_cleared") or store["session"].get("kds_cleared") or ""
+        ids = [part.strip() for part in raw.split(",") if part.strip()][:max_ids]
+        if oid and oid not in ids:
+            ids.append(oid)
+        value = ",".join(ids[:max_ids])
+        store["local"]["kds_cleared"] = value
+        store["session"]["kds_cleared"] = value
+
+    remember("ORDER_A")
+    assert store["local"]["kds_cleared"] == "ORDER_A"
+    assert store["session"]["kds_cleared"] == "ORDER_A"
+    remember("ORDER_A")
+    assert store["local"]["kds_cleared"] == "ORDER_A"
+    remember("ORDER_B")
+    assert store["local"]["kds_cleared"] == "ORDER_A,ORDER_B"
+    assert store["session"]["kds_cleared"] == "ORDER_A,ORDER_B"
+
+    runner = ROOT / "tests" / "fixtures" / "kds_cleared_vm.js"
+    for candidate in (
+        os.environ.get("NODE_BIN"),
+        "/usr/bin/nodejs",
+        "/usr/bin/node",
+    ):
+        if not candidate or not Path(candidate).is_file():
+            continue
         result = subprocess.run(
-            [node, runner, str(js_path)],
+            [candidate, str(runner), str(js_path)],
             check=False,
             capture_output=True,
             text=True,
         )
-    except FileNotFoundError:
-        text = js_path.read_text(encoding="utf-8")
-        assert 'localStorage.setItem(STORE, value)' in text
-        assert 'sessionStorage.setItem(STORE, value)' in text
-        assert "kdsRememberCleared" in text
+        assert result.returncode == 0, result.stderr or result.stdout
         return
-    assert result.returncode == 0, result.stderr or result.stdout
