@@ -162,7 +162,7 @@
       .replace(/"/g, "&quot;");
   }
 
-  const BRAND_LOGO = "/static/order/logo.svg";
+  const BRAND_LOGO = "/static/order/logo.jpg";
 
   function imgTag(src, alt, cls, fallback) {
     const fb = fallback || "/static/order/drinks/viet-iced-coffee.svg";

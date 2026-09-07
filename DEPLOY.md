@@ -144,7 +144,7 @@ If `SQUARE_ACCESS_TOKEN` is unset on laptop, checkout is a **demo** that skips S
 4. **Pay now** → server `POST /order/api/checkout` → Square hosted Checkout (Apple Pay / Google Pay / card). Confirm the charged total includes the selected tip (order service charge named Tip) and Square does not show a second tip prompt. Confirm the browser never receives `SQUARE_ACCESS_TOKEN`.
 5. After pay, Square redirects to `/order/status`. Labels **Paid** and **Making** (not color-only). Copy is “We're making it” / “We'll text when it's at pickup” if a phone was given **and** Twilio is configured. Otherwise “We'll have it at pickup.”
 6. Kitchen `/board` shows the new Square order (getorders, same as POS drinks). No new ticket database.
-7. Tap the ticket off the board (or mark pickup ready in Square). Phone status becomes **Ready**, “Head to the pickup counter”, button **Go to pickup** — not “grab it” or “name on the cup”. Ready hero is the Sunshine's Bakery logo (`/static/order/logo.svg`), not a drink / coffee placeholder.
+7. Tap the ticket off the board (or mark pickup ready in Square). Phone status becomes **Ready**, “Head to the pickup counter”, button **Go to pickup** — not “grab it” or “name on the cup”. Ready hero is the official Sunshine's Bakery girl-in-hat logo (`/static/order/logo.jpg`), not a drink / coffee placeholder or the old sunflower SVG.
 8. If a phone was entered and Twilio is set: one SMS (“your drink is ready. Head to the pickup counter.”). Close the customer tab after pay: ticket still on the board; kitchen tap still sends the text.
 9. Square drink line notes are the pickup **name only**.
 

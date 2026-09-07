@@ -166,6 +166,8 @@ def test_order_pages_and_assets() -> None:
     assert page.status_code == 200
     assert "Sunshine's" in page.text
     assert "/static/order/order.js" in page.text
+    assert "/static/order/logo.jpg" in page.text
+    assert "/static/order/logo.svg" not in page.text
     assert "SQUARE_ACCESS_TOKEN" not in page.text
     js = client.get("/static/order/order.js")
     assert js.status_code == 200
@@ -181,7 +183,7 @@ def test_order_pages_and_assets() -> None:
     assert "drink-step" in js.text
     assert "No extra options. Add" in js.text
     assert "Tap a drink to choose options" in js.text
-    assert 'BRAND_LOGO = "/static/order/logo.svg"' in js.text
+    assert 'BRAND_LOGO = "/static/order/logo.jpg"' in js.text
     assert "brand-mark" in js.text
     assert "We'll have it at pickup." in js.text
     assert "No tip" in js.text
@@ -191,9 +193,13 @@ def test_order_pages_and_assets() -> None:
     assert 'data-tip="20"' in js.text
     assert "Tip is added before checkout." in js.text
     assert "Square ready text" not in js.text
-    logo = client.get("/static/order/logo.svg")
+    logo = client.get("/static/order/logo.jpg")
     assert logo.status_code == 200
-    assert "Sunshine" in logo.text
+    assert logo.headers["content-type"].startswith("image/jpeg")
+    assert logo.content[:3] == b"\xff\xd8\xff"
+    assert len(logo.content) > 20_000
+    stale = client.get("/static/order/logo.svg")
+    assert stale.status_code == 404
     css = client.get("/static/order/order.css")
     assert css.status_code == 200
     assert "#e8b4b8" in css.text
@@ -205,6 +211,8 @@ def test_order_pages_and_assets() -> None:
     assert tent.status_code == 200
     assert "Scan to order drinks" in tent.text
     assert "Pay on your phone" in tent.text
+    assert "/static/order/logo.jpg" in tent.text
+    assert "/static/order/logo.svg" not in tent.text
     qr = client.get("/qr", follow_redirects=False)
     assert qr.status_code in (302, 303)
     assert qr.headers["location"].endswith("/order")
