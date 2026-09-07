@@ -132,6 +132,7 @@
   }
 
   function addItem(drinkId, mods, qty) {
+    /* Only called from the drink confirm screen after the customer sees mods. */
     state.cart.items.push({
       id: drinkId,
       qty: qty || 1,
@@ -222,7 +223,8 @@
       const extra = opt.price_cents ? ` · ${money(opt.price_cents)}` : "";
       return `${escapeHtml(opt.label)}${extra}`;
     }
-    const groups = (drink.groups || []).map((group) => {
+    const groupList = drink.groups || [];
+    const groups = groupList.map((group) => {
       const required = group.required !== false && (group.min_selected || 0) >= 1;
       const hint = required ? "" : " · optional";
       if (group.type === "multi") {
@@ -238,12 +240,15 @@
           <button class="pill check ${current === opt.id ? "on" : ""}" type="button" data-single="${escapeHtml(group.id)}" data-opt="${escapeHtml(opt.id)}" data-optional="${required ? "0" : "1"}">${optCaption(opt)}</button>
         `).join("")}</div></div>`;
     }).join("");
-    const emptyMods = (drink.groups || []).length ? "" : `<p class="hint">No extra options — add it as-is, or change qty.</p>`;
+    const emptyMods = groupList.length
+      ? ""
+      : `<p class="hint">No extra options. Add ${escapeHtml(drink.name)} as-is, or change qty.</p>`;
     app.innerHTML = `
-      <section class="screen">
+      <section class="screen drink-step">
         ${backLink("Drinks", "/order")}
         <div class="hero">${imgTag(drink.photo, drink.name)}</div>
         <h1 class="drink-title">${escapeHtml(drink.name)}</h1>
+        <p class="drink-price">${money(drink.price_cents || 0)}</p>
         <p class="drink-desc">${escapeHtml(drink.description)}</p>
         ${emptyMods}
         ${groups}

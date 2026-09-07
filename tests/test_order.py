@@ -129,10 +129,10 @@ def test_menu_has_six_drinks_and_no_token() -> None:
     assert res.status_code == 200
     data = res.json()
     assert data["source"] == "demo"
-    assert len(data["drinks"]) == 6
+    assert len(data["drinks"]) == 7
     assert all(d["photo"].startswith("/static/order/drinks/") for d in data["drinks"])
     ids = [d["id"] for d in data["drinks"]]
-    assert ids == [
+    assert ids[:6] == [
         "viet-iced-coffee",
         "hot-coffee",
         "biscoff-coffee",
@@ -140,6 +140,10 @@ def test_menu_has_six_drinks_and_no_token() -> None:
         "milk-tea",
         "fruit-tea",
     ]
+    assert ids[-1] == "lemonade"
+    lemonade = next(d for d in data["drinks"] if d["id"] == "lemonade")
+    assert lemonade["groups"] == []
+    assert lemonade["name"] == "Lemonade"
     text = res.text.casefold()
     assert "square_access_token" not in text
     assert "eaaa" not in text
@@ -160,7 +164,10 @@ def test_order_pages_and_assets() -> None:
     assert "name on the cup" not in js.text.casefold()
     assert "data-add" not in js.text
     assert "addItem(drink.id, defaultMods" not in js.text
+    assert js.text.count("addItem(") == 2
     assert "Add to order" in js.text
+    assert "drink-step" in js.text
+    assert "No extra options. Add" in js.text
     assert "Tap a drink to choose options" in js.text
     css = client.get("/static/order/order.css")
     assert css.status_code == 200

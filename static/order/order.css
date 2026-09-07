@@ -29,7 +29,7 @@ body.order-app {
   margin: 0 auto;
   min-height: 100dvh;
   position: relative;
-  padding-bottom: calc(7.4rem + env(safe-area-inset-bottom));
+  padding-bottom: calc(8.4rem + env(safe-area-inset-bottom));
 }
 
 .boot {
@@ -173,6 +173,12 @@ body.order-app {
   margin: 0 0 1rem;
   color: var(--cocoa-soft);
 }
+.drink-price {
+  margin: 0 0 0.35rem;
+  font-weight: 800;
+  font-size: 1.05rem;
+}
+.screen.drink-step { padding-bottom: 0.85rem; }
 
 .mod-block { margin: 0 0 1.05rem; }
 .mod-block h2 {

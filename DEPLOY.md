@@ -92,7 +92,7 @@ If `SQUARE_ACCESS_TOKEN` is unset on laptop, checkout is a **demo** that skips S
 ## Manual test checklist
 
 1. Open `/order` on a phone (or desktop at phone width). Menu lists Coffee + Tea (and More if Catalog has other Drink items); not a photo dump. Drinks and every modifier come from Square Catalog, not a hardcoded list.
-2. Tap a drink. The **options screen always opens** (milk / sweet / sauce / flavor / matcha option / boba / qty) even when everything is default or the drink has no modifiers. There is no menu `+` that skips into the cart. **Add to order** only on that screen.
+2. Tap a drink. The **options / confirm screen always opens** before the cart — every Square modifier list for that drink (milk, sweet, sauce, flavor, matcha option, boba, …), plus qty. If Catalog has **zero** modifiers, the same step still shows the drink **name**, price, qty, and **Add to order**. There is no menu `+` that skips into the cart. Sticky **Review order** only after they confirm.
 3. Sticky **Review order · N drinks**. Name + to-go (or for here) on the same review screen. Optional phone.
 4. **Pay now** → server `POST /order/api/checkout` → Square hosted Checkout (Apple Pay / Google Pay / card). Confirm the browser never receives `SQUARE_ACCESS_TOKEN`.
 5. After pay, Square redirects to `/order/status`. Labels **Paid** and **Making** (not color-only). Copy is “We're making it” / “We'll text when it's at pickup” if a phone was given.

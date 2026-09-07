@@ -326,9 +326,9 @@ def map_modifier_groups(
     data = _item_data(item)
     groups: list[dict[str, Any]] = []
     defaults: dict[str, Any] = {}
-    for info in data.get("modifier_list_info") or []:
-        if not isinstance(info, dict):
-            continue
+    infos = [info for info in (data.get("modifier_list_info") or []) if isinstance(info, dict)]
+    infos.sort(key=lambda info: _int(info.get("ordinal"), 0))
+    for info in infos:
         if info.get("enabled") is False:
             continue
         list_id = str(info.get("modifier_list_id") or "").strip()

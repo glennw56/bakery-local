@@ -279,6 +279,16 @@ DEMO_DRINKS: list[dict[str, Any]] = [
             },
         ],
     },
+    {
+        "id": "lemonade",
+        "name": "Lemonade",
+        "square_name": "Lemonade",
+        "description": "fresh lemonade",
+        "category": "tea",
+        "price_cents": 450,
+        "defaults": {},
+        "groups": [],
+    },
 ]
 
 class OrderError(Exception):
@@ -352,7 +362,14 @@ def demo_menu_drinks() -> list[dict[str, Any]]:
     drinks = []
     for drink in DEMO_DRINKS:
         row = dict(drink)
-        row["photo"] = photo_url(str(drink["id"]))
+        stem = str(drink["id"])
+        if any(
+            (catalog_svc.DRINK_PHOTO_DIR / f"{stem}{ext}").is_file()
+            for ext in (".jpg", ".jpeg", ".png", ".webp", ".svg")
+        ):
+            row["photo"] = photo_url(stem)
+        else:
+            row["photo"] = catalog_svc.photo_for_name(str(drink.get("square_name") or drink["name"]))
         groups = []
         for group in drink.get("groups") or []:
             gg = dict(group)
