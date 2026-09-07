@@ -42,6 +42,7 @@ _PHOTO_STEMS = (
     (("matcha",), "matcha-latte"),
     (("milk tea",), "milk-tea"),
     (("fruit tea",), "fruit-tea"),
+    (("lemonade",), "fruit-tea"),
     (("hot coffee", "drip coffee"), "hot-coffee"),
     (("coffee",), "hot-coffee"),
 )
