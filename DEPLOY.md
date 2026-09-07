@@ -6,7 +6,7 @@ Customer path: scan QR → `/order` → drinks + modifiers → Square hosted Che
 
 ## Catalog approach (Irondale QR)
 
-**Live Square Catalog** is the source of truth for `/order`. `GET /order/api/menu` calls Catalog `SearchCatalogItems` (Drink category ids + Irondale `enabled_location_ids`), then `BatchRetrieveCatalogObjects` for each item’s modifier lists and images.
+**Live Square Catalog** is the source of truth for `/order`. `GET /order/api/menu` calls Catalog `SearchCatalogItems` (Drink category ids + Irondale `enabled_location_ids`), then `BatchRetrieveCatalogObjects` for each item’s modifier lists and images. Irondale drinks are Square `FOOD_AND_BEV` items — `map_catalog_items` keeps that product type (plus `REGULAR` / `RETAIL_ITEM` / `BEVERAGE`). Pastry stays out via the Drink-category rule.
 
 Every POS option on that drink is returned (milk, sweet, sauce, flavor, matcha option, boba, add-ons, …) — not the old six-drink ad-hoc list in `app/order.py`. Pastry (Biscoff Roll) is excluded by the same Drink-category rule as the board (`app/drinks.py`). Shop 2 / Trussville items that are not present at Irondale are excluded.
 
@@ -66,6 +66,7 @@ Confirm:
 
 - `GET https://<drinks-url>/health` → `{"ok": true, "service": "drinks"}`
 - `GET https://<drinks-url>/order` → Sunshine's drinks menu
+- `GET https://<drinks-url>/order/api/menu` → `source=square` and **non-empty** `drinks` (expect ~9 Irondale drinks with full modifier lists; empty `drinks` with no `catalog_error` was the `FOOD_AND_BEV` filter bug)
 - `GET https://<drinks-url>/loyalty` → 404
 
 ## Print a QR for the Irondale table tent

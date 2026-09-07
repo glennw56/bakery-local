@@ -128,6 +128,27 @@ def test_insufficient_scopes_mentions_items_read() -> None:
         assert "ITEMS_READ" in exc.message
 
 
+def test_food_and_bev_drinks_are_not_dropped() -> None:
+    """Live Irondale drinks are FOOD_AND_BEV; do not empty the menu on that type."""
+    related = {obj["id"]: obj for obj in RELATED}
+    live = []
+    for item in search_response()["items"]:
+        row = dict(item)
+        data = dict(item.get("item_data") or {})
+        data["product_type"] = "FOOD_AND_BEV"
+        row["item_data"] = data
+        live.append(row)
+    drinks = map_catalog_items(live, related, IRONDALE)
+    ids = {d["id"] for d in drinks}
+    assert VAR["viet"] in ids
+    assert VAR["matcha"] in ids
+    assert VAR["lemonade"] in ids
+    assert VAR["roll"] not in ids
+    assert VAR["soldout"] not in ids
+    assert VAR["trussville"] not in ids
+    assert not any(d["square_name"] == "Biscoff Roll" for d in drinks)
+
+
 def test_search_empty_falls_back_to_list() -> None:
     class EmptySearch(CatalogFakeClient):
         def post(self, url, headers=None, json=None):

@@ -431,7 +431,7 @@ def map_catalog_items(
             continue
         data = _item_data(item)
         product = str(data.get("product_type") or "REGULAR").upper()
-        if product and product not in ("REGULAR", "RETAIL_ITEM", "BEVERAGE"):
+        if product and product not in ("REGULAR", "RETAIL_ITEM", "BEVERAGE", "FOOD_AND_BEV"):
             continue
         if data.get("is_archived"):
             continue
