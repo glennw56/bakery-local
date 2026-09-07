@@ -72,7 +72,10 @@ def test_maps_irondale_drinks_and_full_modifier_lists() -> None:
     assert matcha["photo"].startswith("https://")
     lemonade = next(d for d in drinks if d["id"] == VAR["lemonade"])
     assert lemonade["groups"] == []
+    assert lemonade["name"] == "Lemonade"
     assert lemonade["category"] == "tea"
+    viet_labels = {g["label"] for g in viet["groups"]}
+    assert viet_labels == {"Milk", "Sweet", "Sauce", "Add-ons"}
     for drink in drinks:
         assert is_drink(
             drink["square_name"],
