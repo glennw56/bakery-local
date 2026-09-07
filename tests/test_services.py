@@ -19,6 +19,9 @@ def test_drinks_board_ok_loyalty_404(monkeypatch) -> None:
     assert health.json()["service"] == "drinks"
     loyalty = client.get("/loyalty")
     assert loyalty.status_code == 404
+    order = client.get("/order")
+    assert order.status_code == 200
+    assert "Sunshine's" in order.text
     ingest = client.post("/internal/ingest")
     assert ingest.status_code == 401
 
@@ -32,6 +35,8 @@ def test_desk_loyalty_gated_board_404(monkeypatch) -> None:
         assert "/login" in loyalty.headers.get("location", "")
     board = client.get("/board")
     assert board.status_code == 404
+    order = client.get("/order")
+    assert order.status_code == 404
     ingest = client.post("/internal/ingest")
     assert ingest.status_code == 404
 

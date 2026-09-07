@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Matcha latte">
+  <defs>
+    <pattern id="s4" width="26" height="400" patternUnits="userSpaceOnUse">
+      <rect width="26" height="400" fill="#f3c9ce"/>
+      <rect width="13" height="400" fill="#f7d9dc"/>
+    </pattern>
+  </defs>
+  <rect width="400" height="400" fill="url(#s4)"/>
+  <text x="22" y="82" font-family="Impact, Arial Black, sans-serif" font-size="44" fill="#ee8fa3">MATCHA</text>
+  <text x="22" y="124" font-family="Impact, Arial Black, sans-serif" font-size="44" fill="#ee8fa3">LATTE</text>
+  <path d="M150 168h118l-14 150h-90z" fill="#f4ece4" stroke="#3f241c" stroke-width="4"/>
+  <path d="M158 186h102l-4 40H162z" fill="#7f9a4a"/>
+  <path d="M162 226h94l-8 84h-78z" fill="#d7e6a8"/>
+  <path d="M148 160h122a18 10 0 0 1 0 16H148a18 10 0 0 1 0-16z" fill="#f7f3ee" stroke="#3f241c" stroke-width="4"/>
+  <circle cx="200" cy="250" r="18" fill="#fff" opacity=".35"/>
+</svg>

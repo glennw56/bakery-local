@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Biscoff coffee">
+  <defs>
+    <pattern id="s3" width="26" height="400" patternUnits="userSpaceOnUse">
+      <rect width="26" height="400" fill="#f3c9ce"/>
+      <rect width="13" height="400" fill="#f7d9dc"/>
+    </pattern>
+  </defs>
+  <rect width="400" height="400" fill="url(#s3)"/>
+  <text x="20" y="78" font-family="Impact, Arial Black, sans-serif" font-size="40" fill="#ee8fa3">BISCOFF</text>
+  <text x="20" y="120" font-family="Impact, Arial Black, sans-serif" font-size="40" fill="#ee8fa3">COFFEE</text>
+  <path d="M150 168h118l-14 150h-90z" fill="#f4ece4" stroke="#3f241c" stroke-width="4"/>
+  <path d="M158 186h102l-5 50H163z" fill="#7a4a28"/>
+  <path d="M163 236h92l-8 74h-76z" fill="#f3d7a4"/>
+  <path d="M148 160h122a18 10 0 0 1 0 16H148a18 10 0 0 1 0-16z" fill="#f7f3ee" stroke="#3f241c" stroke-width="4"/>
+  <rect x="188" y="148" width="44" height="28" rx="6" transform="rotate(-18 210 162)" fill="#c47a32" stroke="#3f241c" stroke-width="3"/>
+  <rect x="196" y="154" width="28" height="8" rx="2" transform="rotate(-18 210 158)" fill="#e8c48c"/>
+</svg>

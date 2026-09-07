@@ -20,8 +20,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, Form, Header, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi import Body, Depends, FastAPI, Form, Header, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, func, select
@@ -33,6 +33,7 @@ from app import loyalty as loyalty_svc
 from app import weekend as weekend_svc
 from app import getreports as getreports_svc
 from app import auth as desk_auth
+from app import order as order_svc
 
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = ROOT / "templates"
@@ -153,12 +154,21 @@ async def service_gate(request: Request, call_next):
             or path.startswith("/board")
             or path.startswith("/internal/ingest")
             or path.startswith("/static")
+            or path.startswith("/order")
+            or path == "/qr"
+            or path.startswith("/qr/")
         )
         if not allowed:
             return Response("Not found.", status_code=404)
         return await call_next(request)
     if service == "desk":
-        blocked = path.startswith("/board") or path.startswith("/internal/ingest")
+        blocked = (
+            path.startswith("/board")
+            or path.startswith("/internal/ingest")
+            or path.startswith("/order")
+            or path == "/qr"
+            or path.startswith("/qr/")
+        )
         if blocked:
             return Response("Not found.", status_code=404)
     if gate_required() and desk_auth.path_is_protected(path) and not desk_auth.session_ok(request):
@@ -234,6 +244,80 @@ def internal_ingest(
         base_url=base_url,
     )
     return {"inserted": inserted, "skipped": skipped}
+
+
+def _order_origin(request: Request) -> str:
+    return order_svc.public_origin(dict(request.headers), request.url)
+
+
+def _order_shell(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "order/app.html", {})
+
+
+@app.get("/qr")
+def qr_redirect():
+    return RedirectResponse("/order", status_code=302)
+
+
+@app.get("/order", response_class=HTMLResponse)
+def order_menu(request: Request):
+    return _order_shell(request)
+
+
+@app.get("/order/review", response_class=HTMLResponse)
+def order_review(request: Request):
+    return _order_shell(request)
+
+
+@app.get("/order/status", response_class=HTMLResponse)
+def order_status_page(request: Request):
+    return _order_shell(request)
+
+
+@app.get("/order/d/{drink_id}", response_class=HTMLResponse)
+def order_drink_page(request: Request, drink_id: str):
+    return _order_shell(request)
+
+
+@app.get("/order/tent", response_class=HTMLResponse)
+def order_tent(request: Request):
+    origin = _order_origin(request)
+    target = f"{origin}/order"
+    return templates.TemplateResponse(
+        request,
+        "order/tent.html",
+        {"order_url": target, "origin": origin},
+    )
+
+
+@app.get("/order/api/menu")
+def order_api_menu():
+    return order_svc.menu_payload()
+
+
+@app.post("/order/api/checkout")
+def order_api_checkout(request: Request, body: dict = Body(...)):
+    try:
+        return order_svc.checkout(body, origin=_order_origin(request))
+    except order_svc.OrderError as exc:
+        return JSONResponse({"error": exc.message}, status_code=exc.status_code)
+
+
+@app.get("/order/api/status")
+def order_api_status(
+    oid: str = Query(""),
+    orderId: str = Query(""),
+    order_id: str = Query(""),
+    checkoutId: str = Query(""),
+    transactionId: str = Query(""),
+):
+    try:
+        return order_svc.lookup_status(
+            order_id=oid or orderId or order_id or transactionId,
+            checkout_id=checkoutId,
+        )
+    except order_svc.OrderError as exc:
+        return JSONResponse({"error": exc.message}, status_code=exc.status_code)
 
 
 
@@ -604,6 +688,11 @@ def board_order_done(
     """Tap an order on the board: hide it. Live getorders uses a tablet cookie, not a ticket DB."""
     minutes = clamp_minutes(minutes)
     oid = (order_id or "").strip()
+    if oid:
+        try:
+            order_svc.mark_pickup_prepared(oid)
+        except Exception:
+            pass
     if (os.environ.get("GETORDERS_URL") or "").strip():
         cleared = parse_cleared(request)
         if oid and oid not in cleared:
