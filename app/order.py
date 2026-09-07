@@ -1,9 +1,13 @@
-"""Irondale QR drink self-order: curated menu + Square CreatePaymentLink.
+"""Irondale QR drink self-order: live Square Catalog + CreatePaymentLink.
 
 Square access token stays in env / Secret Manager. Never sent to the browser.
-Beta catalog is server-side (six drinks + modifiers), not a live Catalog API
-sync. Line item names match POS drink names so getorders / is_drink still
-pick them up on the public drink board.
+When a token is present, /order/api/menu is Drink-category items + full
+modifier lists from Catalog at the Irondale location. Checkout line items
+use catalog variation / modifier object ids so paid orders match POS and
+still land on the drink board.
+
+Laptop with no token keeps DEMO_DRINKS so the UX can be clicked without
+Square. Cloud Run drinks always has a token and never uses that list.
 """
 
 from __future__ import annotations
@@ -12,34 +16,25 @@ import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
 
+from app import catalog as catalog_svc
 from app.drinks import is_drink
 
 CHICAGO = ZoneInfo("America/Chicago")
-SQUARE_VERSION = "2025-01-23"
+SQUARE_VERSION = catalog_svc.SQUARE_VERSION
 DEFAULT_LOCATION_ID = "L4CK6YWGT5XQX"
 DEFAULT_API_BASE = "https://connect.squareup.com"
-ROOT = Path(__file__).resolve().parent.parent
-DRINK_PHOTO_DIR = ROOT / "static" / "order" / "drinks"
 
-
-def photo_url(stem: str) -> str:
-    """Prefer a real photo if Glenn drops one in static/order/drinks; else the svg."""
-    for ext in (".jpg", ".jpeg", ".png", ".webp", ".svg"):
-        if (DRINK_PHOTO_DIR / f"{stem}{ext}").is_file():
-            return f"/static/order/drinks/{stem}{ext}"
-    return f"/static/order/drinks/{stem}.svg"
+photo_url = catalog_svc.photo_url
 DEMO_MAKING_ID = "demo"
 DEMO_READY_ID = "demo-ready"
 
-# Photo paths: drop a jpg/png next to the svg with the same stem to replace art.
-
-DRINKS: list[dict[str, Any]] = [
+# Laptop-only when SQUARE_ACCESS_TOKEN is unset. Live Irondale uses Catalog.
+DEMO_DRINKS: list[dict[str, Any]] = [
     {
         "id": "viet-iced-coffee",
         "name": "Viet iced coffee",
@@ -286,9 +281,6 @@ DRINKS: list[dict[str, Any]] = [
     },
 ]
 
-DRINK_BY_ID = {d["id"]: d for d in DRINKS}
-
-
 class OrderError(Exception):
     def __init__(self, message: str, status_code: int = 400):
         super().__init__(message)
@@ -356,17 +348,68 @@ def square_headers(token: str) -> dict[str, str]:
     }
 
 
-def menu_payload() -> dict[str, Any]:
+def demo_menu_drinks() -> list[dict[str, Any]]:
     drinks = []
-    for drink in DRINKS:
+    for drink in DEMO_DRINKS:
         row = dict(drink)
         row["photo"] = photo_url(str(drink["id"]))
+        groups = []
+        for group in drink.get("groups") or []:
+            gg = dict(group)
+            if str(gg.get("type") or "single") == "multi":
+                gg.setdefault("min_selected", 0)
+                gg.setdefault("max_selected", 0)
+                gg.setdefault("required", False)
+            else:
+                gg.setdefault("min_selected", 1)
+                gg.setdefault("max_selected", 1)
+                gg.setdefault("required", True)
+            groups.append(gg)
+        row["groups"] = groups
         drinks.append(row)
-    return {
-        "location": "Irondale",
-        "pay_mode": pay_mode(),
-        "drinks": drinks,
-    }
+    return drinks
+
+
+def list_menu_drinks(*, client: httpx.Client | None = None, refresh: bool = False) -> list[dict[str, Any]]:
+    token = square_token()
+    if not token:
+        return demo_menu_drinks()
+    return catalog_svc.list_irondale_drinks(
+        token=token,
+        location_id=irondale_location_id(),
+        api_base=square_api_base(),
+        client=client,
+        refresh=refresh,
+    )
+
+
+def drink_by_id(drink_id: str, drinks: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+    rows = drinks if drinks is not None else list_menu_drinks()
+    for drink in rows:
+        if str(drink.get("id") or "") == drink_id:
+            return drink
+    return None
+
+
+def menu_payload(*, client: httpx.Client | None = None) -> dict[str, Any]:
+    token = square_token()
+    try:
+        drinks = list_menu_drinks(client=client)
+        source = "demo" if not token else "square"
+        return {
+            "location": "Irondale",
+            "pay_mode": pay_mode(),
+            "source": source,
+            "drinks": drinks,
+        }
+    except catalog_svc.CatalogError as exc:
+        return {
+            "location": "Irondale",
+            "pay_mode": pay_mode(),
+            "source": "error",
+            "catalog_error": exc.message,
+            "drinks": [],
+        }
 
 
 def _option(drink: dict, group_id: str, option_id: str) -> dict[str, Any] | None:
@@ -402,7 +445,7 @@ def _order_number() -> str:
     return str((now.hour * 60 + now.minute) % 90 + 10)
 
 
-def validate_cart(body: dict[str, Any]) -> dict[str, Any]:
+def validate_cart(body: dict[str, Any], *, client: httpx.Client | None = None) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise OrderError("Cart is required.")
     name = str(body.get("name") or "").strip()
@@ -422,12 +465,17 @@ def validate_cart(body: dict[str, Any]) -> dict[str, Any]:
     if len(raw_items) > 12:
         raise OrderError("Too many drinks for one order.")
 
+    try:
+        menu = list_menu_drinks(client=client)
+    except catalog_svc.CatalogError as exc:
+        raise OrderError(exc.message, exc.status_code) from exc
+
     lines: list[dict[str, Any]] = []
     total = 0
     for raw in raw_items:
         if not isinstance(raw, dict):
             raise OrderError("Each item must be an object.")
-        drink = DRINK_BY_ID.get(str(raw.get("id") or "").strip())
+        drink = drink_by_id(str(raw.get("id") or "").strip(), menu)
         if not drink:
             raise OrderError("Unknown drink.")
         try:
@@ -443,6 +491,14 @@ def validate_cart(body: dict[str, Any]) -> dict[str, Any]:
         for group in drink.get("groups") or []:
             gid = str(group.get("id") or "")
             gtype = str(group.get("type") or "single")
+            try:
+                min_sel = int(group.get("min_selected") or 0)
+            except (TypeError, ValueError):
+                min_sel = 0
+            try:
+                max_sel = int(group.get("max_selected") or 0)
+            except (TypeError, ValueError):
+                max_sel = 0
             if gtype == "multi":
                 chosen = selections.get(gid, defaults.get(gid, []))
                 if chosen is None:
@@ -452,6 +508,7 @@ def validate_cart(body: dict[str, Any]) -> dict[str, Any]:
                 if not isinstance(chosen, list):
                     raise OrderError(f"Invalid {group.get('label') or gid}.")
                 seen: set[str] = set()
+                picked: list[dict[str, Any]] = []
                 for oid in chosen:
                     key = str(oid).strip()
                     if not key or key in seen:
@@ -462,10 +519,17 @@ def validate_cart(body: dict[str, Any]) -> dict[str, Any]:
                     seen.add(key)
                     extra = int(opt.get("price_cents") or 0)
                     line_cents += extra
-                    mods.append(opt)
+                    picked.append(opt)
+                if len(picked) < min_sel:
+                    raise OrderError(f"Choose {group.get('label') or gid}.")
+                if max_sel > 0 and len(picked) > max_sel:
+                    raise OrderError(f"Too many {group.get('label') or gid} options.")
+                mods.extend(picked)
             else:
-                oid = str(selections.get(gid) or defaults.get(gid) or "").strip()
+                oid = str(selections.get(gid) if selections.get(gid) is not None else defaults.get(gid) or "").strip()
                 if not oid:
+                    if min_sel <= 0:
+                        continue
                     raise OrderError(f"Choose {group.get('label') or gid}.")
                 opt = _option(drink, gid, oid)
                 if not opt:
@@ -473,7 +537,11 @@ def validate_cart(body: dict[str, Any]) -> dict[str, Any]:
                 extra = int(opt.get("price_cents") or 0)
                 line_cents += extra
                 mods.append(opt)
-        if not is_drink(str(drink["square_name"])):
+        if not is_drink(
+            str(drink["square_name"]),
+            category_ids=drink.get("category_ids"),
+            category_names=drink.get("category_names"),
+        ):
             raise OrderError("That item is not a drink.")
         detail = " · ".join(str(m["label"]) for m in mods if m.get("label"))
         lines.append(
@@ -481,7 +549,8 @@ def validate_cart(body: dict[str, Any]) -> dict[str, Any]:
                 "id": drink["id"],
                 "name": drink["name"],
                 "square_name": drink["square_name"],
-                "photo": photo_url(str(drink["id"])),
+                "catalog_object_id": str(drink.get("catalog_object_id") or "").strip(),
+                "photo": drink.get("photo") or photo_url(str(drink["id"])),
                 "qty": qty,
                 "modifiers": mods,
                 "detail": detail,
@@ -502,8 +571,27 @@ def validate_cart(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _mod_labels(mods: list[dict[str, Any]]) -> list[str]:
-    return [str(m.get("label") or "").strip() for m in mods if str(m.get("label") or "").strip()]
+def _line_item_modifiers(line: dict[str, Any]) -> list[dict[str, Any]]:
+    modifiers: list[dict[str, Any]] = []
+    for mod in line.get("modifiers") or []:
+        if not isinstance(mod, dict):
+            continue
+        label = str(mod.get("label") or "").strip()
+        catalog_id = str(mod.get("catalog_object_id") or "").strip()
+        if not catalog_id and not label:
+            continue
+        entry: dict[str, Any] = {"quantity": "1"}
+        if catalog_id:
+            entry["catalog_object_id"] = catalog_id
+        if label:
+            entry["name"] = label
+        if not catalog_id:
+            entry["base_price_money"] = {
+                "amount": int(mod.get("price_cents") or 0),
+                "currency": "USD",
+            }
+        modifiers.append(entry)
+    return modifiers
 
 
 def build_payment_link_body(
@@ -516,23 +604,24 @@ def build_payment_link_body(
     pickup_note = _pickup_label(cart["pickup"])
     line_items: list[dict[str, Any]] = []
     for line in cart["items"]:
-        labels = _mod_labels(line["modifiers"])
-        modifiers = [
-            {
-                "name": label,
-                "quantity": "1",
-                "base_price_money": {"amount": int(mod.get("price_cents") or 0), "currency": "USD"},
-            }
-            for mod, label in zip(line["modifiers"], labels)
-        ]
+        modifiers = _line_item_modifiers(line)
         note_bits = [bit for bit in (line.get("detail"), pickup_note, f"Name: {cart['name']}") if bit]
+        catalog_id = str(line.get("catalog_object_id") or "").strip()
         item: dict[str, Any] = {
-            "name": line["square_name"],
             "quantity": str(int(line["qty"])),
             "item_type": "ITEM",
-            "base_price_money": {"amount": int(line["unit_cents"]) - sum(int(m.get("price_cents") or 0) for m in line["modifiers"]), "currency": "USD"},
             "note": " · ".join(note_bits)[:500],
         }
+        if catalog_id:
+            item["catalog_object_id"] = catalog_id
+            item["name"] = str(line.get("square_name") or line.get("name") or "")
+        else:
+            item["name"] = line["square_name"]
+            item["base_price_money"] = {
+                "amount": int(line["unit_cents"])
+                - sum(int(m.get("price_cents") or 0) for m in line["modifiers"]),
+                "currency": "USD",
+            }
         if modifiers:
             item["modifiers"] = modifiers
         line_items.append(item)
@@ -652,7 +741,7 @@ def demo_checkout(cart: dict[str, Any]) -> dict[str, Any]:
 
 
 def checkout(body: dict[str, Any], *, origin: str, client: httpx.Client | None = None) -> dict[str, Any]:
-    cart = validate_cart(body)
+    cart = validate_cart(body, client=client)
     mode = pay_mode()
     if mode == "off":
         raise OrderError("Ordering is not configured yet.", 503)
@@ -664,14 +753,7 @@ def checkout(body: dict[str, Any], *, origin: str, client: httpx.Client | None =
 
 
 def _photo_for_square_name(name: str) -> str:
-    needle = (name or "").casefold()
-    for drink in DRINKS:
-        if drink["square_name"].casefold() == needle or drink["name"].casefold() == needle:
-            return photo_url(str(drink["id"]))
-    for drink in DRINKS:
-        if drink["square_name"].casefold() in needle or drink["name"].casefold() in needle:
-            return photo_url(str(drink["id"]))
-    return photo_url(str(DRINKS[0]["id"]))
+    return catalog_svc.photo_for_name(name)
 
 
 def _status_from_cart(cart: dict[str, Any], status: str) -> dict[str, Any]:
