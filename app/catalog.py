@@ -344,7 +344,19 @@ def map_modifier_groups(
         if modifier_type in ("TEXT", "CATALOG_MODIFIER_LIST_TEXT"):
             continue
         options: list[dict[str, Any]] = []
-        default_ids: list[str] = []
+        list_defaults: list[str] = []
+        override_on: list[str] = []
+        override_off: set[str] = set()
+        for ov in info.get("modifier_overrides") or []:
+            if not isinstance(ov, dict):
+                continue
+            oid = str(ov.get("modifier_id") or "").strip()
+            if not oid or "on_by_default" not in ov:
+                continue
+            if ov.get("on_by_default"):
+                override_on.append(oid)
+            else:
+                override_off.add(oid)
         for mod in _collect_modifiers(list_obj, related):
             mid = str(mod.get("id") or "").strip()
             mdata = mod.get("modifier_data") if isinstance(mod.get("modifier_data"), dict) else {}
@@ -354,11 +366,8 @@ def map_modifier_groups(
             override = _override_for(info, mid)
             if override.get("sold_out") or mdata.get("sold_out"):
                 continue
-            on_default = override.get("on_by_default")
-            if on_default is None:
-                on_default = mdata.get("on_by_default")
-            if on_default:
-                default_ids.append(mid)
+            if mdata.get("on_by_default") and mid not in override_off:
+                list_defaults.append(mid)
             options.append(
                 {
                     "id": mid,
@@ -369,6 +378,9 @@ def map_modifier_groups(
             )
         if not options:
             continue
+        default_ids = [x for x in override_on if any(o["id"] == x for o in options)] or [
+            x for x in list_defaults if x not in override_off
+        ]
         min_selected = _effective_bound(info, list_data, "min_selected_modifiers")
         max_selected = _effective_bound(info, list_data, "max_selected_modifiers")
         selection = str(list_data.get("selection_type") or "").upper()
