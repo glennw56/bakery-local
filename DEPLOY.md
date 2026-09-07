@@ -4,13 +4,17 @@ Public beta, Irondale storefront only. Phone web app on the existing `bakery-dri
 
 Customer path: scan QR → `/order` → drinks + modifiers → Square hosted Checkout → `/order/status` (Paid / Making / Ready). Closing the tab still leaves the ticket on the public drink board (Square payment → existing getorders live pull).
 
-## Catalog approach (this beta)
+## Catalog approach (Irondale QR)
 
-**Server-side curated list** in `app/order.py` (`DRINKS`): the six drinks from the approved mock (Viet iced coffee, hot coffee, Biscoff coffee, matcha latte, milk tea, fruit tea) with milk / sweet / flavor / boba / extra-shot modifiers.
+**Live Square Catalog** is the source of truth for `/order`. `GET /order/api/menu` calls Catalog `SearchCatalogItems` (Drink category ids + Irondale `enabled_location_ids`), then `BatchRetrieveCatalogObjects` for each item’s modifier lists and images.
 
-Not a live Square Catalog API sync. Line item **names match POS** (`Vietnamese Coffee`, `Biscoff Coffee`, `Matcha Latte`, `Milk Tea`, `Fruit Tea`, `Hot Coffee`) so `is_drink` and getorders still treat them as drinks. Prices are cents in that file (edit there; they are not secrets).
+Every POS option on that drink is returned (milk, sweet, sauce, flavor, matcha option, boba, add-ons, …) — not the old six-drink ad-hoc list in `app/order.py`. Pastry (Biscoff Roll) is excluded by the same Drink-category rule as the board (`app/drinks.py`). Shop 2 / Trussville items that are not present at Irondale are excluded.
 
-Replace SVG placeholders with photos by dropping `static/order/drinks/<id>.jpg` (or `.png` / `.webp`) next to the svg. `photo_url()` prefers a real photo. Ids: `viet-iced-coffee`, `hot-coffee`, `biscoff-coffee`, `matcha-latte`, `milk-tea`, `fruit-tea`. `Dockerfile.drinks` currently dockerignores `*.png` at the repo root — keep photos as `.jpg`/`.webp` or add `!static/order/**/*.png` if you must use png.
+Checkout `CreatePaymentLink` line items send **catalog variation `catalog_object_id`** and **modifier `catalog_object_id`s** (not fake ad-hoc names). Square prices and names the order like POS, so getorders / `is_drink` still put paid drinks on the board.
+
+Laptop with **no** `SQUARE_ACCESS_TOKEN` still serves the old demo six-drink list so `/order` can be clicked without Square. Cloud Run `bakery-drinks` has a token and never uses that demo list.
+
+Replace SVG placeholders with photos by dropping `static/order/drinks/<stem>.jpg` (or `.png` / `.webp`) next to the svg. Catalog item images (https Square CDN URLs) win when present. Stems used as fallback: `viet-iced-coffee`, `hot-coffee`, `biscoff-coffee`, `matcha-latte`, `milk-tea`, `fruit-tea`. `Dockerfile.drinks` currently dockerignores `*.png` at the repo root — keep photos as `.jpg`/`.webp` or add `!static/order/**/*.png` if you must use png.
 
 ## Env vars (drinks Cloud Run)
 
@@ -22,6 +26,7 @@ Same secret pattern as ingest. **Never put a Square token in client JS, the imag
 | `SQUARE_LOCATION_ID_IRONDALE` | recommended | Irondale location id. |
 | `LOCATION_ID` or `SQUARE_LOCATION_ID` | fallback | Used if the Irondale-specific var is empty. |
 | `SQUARE_API_BASE` | no | Default `https://connect.squareup.com`. |
+| `CATALOG_CACHE_SECONDS` | no | How long the drinks service caches Catalog (default `90`). Set `0` to fetch every menu load. |
 | `ORDER_PUBLIC_URL` | recommended | Public origin of this Cloud Run service, no trailing slash, e.g. `https://bakery-drinks-xxxxx-ue.a.run.app`. Used as Square `redirect_url` after pay. |
 | `GETORDERS_URL` | already set | Board live pull. Unchanged. |
 | `INGEST_KEY` | already set | Ingest hook only. Not used by `/order`. |
@@ -31,7 +36,11 @@ If all location vars are empty, code falls back to Irondale `L4CK6YWGT5XQX` (sam
 
 ### Token scopes
 
-CreatePaymentLink needs **ORDERS_READ, ORDERS_WRITE, PAYMENTS_WRITE**. If the existing ingest token is payments-read only, minting checkout links will 502 until Glenn adds those scopes (or a separate drinks-order secret wired to the same env name).
+CreatePaymentLink needs **ORDERS_READ, ORDERS_WRITE, PAYMENTS_WRITE**.
+
+Live menu needs **ITEMS_READ** (Catalog `SearchCatalogItems` / `BatchRetrieve`). If the existing ingest token is payments-read only, `/order/api/menu` returns an empty menu with `catalog_error` until Glenn adds **ITEMS_READ** (or a separate drinks-order secret wired to the same `SQUARE_ACCESS_TOKEN` env name). No new Cloud Run env name is required.
+
+If the ingest token is payments-read only, minting checkout links will 502 until Glenn adds the Orders/Payments write scopes.
 
 Ready status: kitchen tap-to-clear on `/board` also tries `UpdateOrder` fulfillment → `PREPARED` when a token is present. The phone poll then shows **Ready** / “Head to the pickup counter” / **Go to pickup**. If Square rejects the update, the board still hides the ticket locally; the phone stays on Making until fulfillment is prepared in Square POS.
 
@@ -82,8 +91,8 @@ If `SQUARE_ACCESS_TOKEN` is unset on laptop, checkout is a **demo** that skips S
 
 ## Manual test checklist
 
-1. Open `/order` on a phone (or desktop at phone width). Menu lists Coffee + Tea; not a photo dump.
-2. Tap Viet iced coffee. Set milk / sweet / add-ons / qty. **Add to order**.
+1. Open `/order` on a phone (or desktop at phone width). Menu lists Coffee + Tea (and More if Catalog has other Drink items); not a photo dump. Drinks and every modifier come from Square Catalog, not a hardcoded list.
+2. Tap a drink. The **options screen always opens** (milk / sweet / sauce / flavor / matcha option / boba / qty) even when everything is default or the drink has no modifiers. There is no menu `+` that skips into the cart. **Add to order** only on that screen.
 3. Sticky **Review order · N drinks**. Name + to-go (or for here) on the same review screen. Optional phone.
 4. **Pay now** → server `POST /order/api/checkout` → Square hosted Checkout (Apple Pay / Google Pay / card). Confirm the browser never receives `SQUARE_ACCESS_TOKEN`.
 5. After pay, Square redirects to `/order/status`. Labels **Paid** and **Making** (not color-only). Copy is “We're making it” / “We'll text when it's at pickup” if a phone was given.

@@ -1,5 +1,5 @@
 (() => {
-  const CART_KEY = "sunshine_qr_cart_v1";
+  const CART_KEY = "sunshine_qr_cart_v2";
   const app = document.getElementById("app");
   if (!app) return;
 
@@ -72,8 +72,12 @@
     for (const group of drink.groups || []) {
       if (group.type === "multi") {
         mods[group.id] = Array.isArray(defaults[group.id]) ? [...defaults[group.id]] : [];
+      } else if (Object.prototype.hasOwnProperty.call(defaults, group.id)) {
+        mods[group.id] = defaults[group.id] || "";
+      } else if (group.required === false) {
+        mods[group.id] = "";
       } else {
-        mods[group.id] = defaults[group.id] || group.options?.[0]?.id || "";
+        mods[group.id] = group.options?.[0]?.id || "";
       }
     }
     return mods;
@@ -138,25 +142,33 @@
 
   function renderMenu() {
     const drinks = state.menu?.drinks || [];
+    if (!drinks.length) {
+      const msg = state.menu?.catalog_error || "Could not load the drink menu.";
+      app.innerHTML = `<p class="boot">${escapeHtml(msg)}</p>`;
+      return;
+    }
     const coffee = drinks.filter((d) => d.category === "coffee");
     const tea = drinks.filter((d) => d.category === "tea");
-    const showCoffee = true;
-    const showTea = true;
+    const more = drinks.filter((d) => d.category !== "coffee" && d.category !== "tea");
+    if (!coffee.length && !tea.length && more.length) state.filter = "more";
     const n = drinkCount();
     const cta = n ? `Review order · ${n} drink${n === 1 ? "" : "s"}` : "Review order";
+    const pills = [
+      coffee.length ? `<button class="pill ${state.filter === "coffee" ? "on" : ""}" type="button" data-filter="coffee">Coffee</button>` : "",
+      tea.length ? `<button class="pill ${state.filter === "tea" ? "on" : ""}" type="button" data-filter="tea">Tea</button>` : "",
+      more.length ? `<button class="pill ${state.filter === "more" ? "on" : ""}" type="button" data-filter="more">More</button>` : "",
+    ].join("");
     app.innerHTML = `
       <section class="screen">
         <div class="brand-block">
           <h1 class="brand">Sunshine's</h1>
           <p class="sub">Drinks</p>
         </div>
-        <div class="pills">
-          <button class="pill ${state.filter === "coffee" ? "on" : ""}" type="button" data-filter="coffee">Coffee</button>
-          <button class="pill ${state.filter === "tea" ? "on" : ""}" type="button" data-filter="tea">Tea</button>
-        </div>
-        <p class="hint">Tap a drink. Pay on this phone.</p>
-        ${showCoffee ? section("Coffee", coffee, "coffee") : ""}
-        ${showTea ? section("Tea", tea, "tea") : ""}
+        <div class="pills">${pills}</div>
+        <p class="hint">Tap a drink to choose options. Pay on this phone.</p>
+        ${section("Coffee", coffee, "coffee")}
+        ${section("Tea", tea, "tea")}
+        ${section("More", more, "more")}
       </section>
       ${sticky(cta)}`;
     app.querySelectorAll("[data-filter]").forEach((btn) => {
@@ -169,18 +181,9 @@
     app.querySelectorAll("[data-open]").forEach((el) => {
       el.addEventListener("click", (ev) => {
         ev.preventDefault();
-        history.pushState({}, "", `/order/d/${el.getAttribute("data-open")}`);
+        const id = el.getAttribute("data-open") || "";
+        history.pushState({}, "", `/order/d/${encodeURIComponent(id)}`);
         route();
-      });
-    });
-    app.querySelectorAll("[data-add]").forEach((btn) => {
-      btn.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        const drink = drinkById(btn.getAttribute("data-add"));
-        if (!drink) return;
-        addItem(drink.id, defaultMods(drink), 1);
-        renderMenu();
       });
     });
     document.getElementById("primary-cta")?.addEventListener("click", () => {
@@ -194,13 +197,12 @@
     return `<h2 class="section-label" id="sec-${escapeHtml(key)}">${escapeHtml(title)}</h2>
       <div class="drink-list">
         ${drinks.map((d) => `
-          <a class="drink-card" href="/order/d/${escapeHtml(d.id)}" data-open="${escapeHtml(d.id)}">
+          <a class="drink-card" href="/order/d/${encodeURIComponent(d.id)}" data-open="${escapeHtml(d.id)}">
             ${imgTag(d.photo, d.name)}
             <div>
               <strong>${escapeHtml(d.name)}</strong>
               <span>${escapeHtml(d.description)}</span>
             </div>
-            <button class="add" type="button" data-add="${escapeHtml(d.id)}" aria-label="Add ${escapeHtml(d.name)}">+</button>
           </a>`).join("")}
       </div>`;
   }
@@ -216,26 +218,34 @@
       state.drinkMods = { id: drink.id, ...defaultMods(drink) };
       state.drinkQty = 1;
     }
+    function optCaption(opt) {
+      const extra = opt.price_cents ? ` · ${money(opt.price_cents)}` : "";
+      return `${escapeHtml(opt.label)}${extra}`;
+    }
     const groups = (drink.groups || []).map((group) => {
+      const required = group.required !== false && (group.min_selected || 0) >= 1;
+      const hint = required ? "" : " · optional";
       if (group.type === "multi") {
         const selected = new Set(state.drinkMods[group.id] || []);
-        return `<div class="mod-block"><h2>${escapeHtml(group.label)}</h2>
+        return `<div class="mod-block"><h2>${escapeHtml(group.label)}${hint}</h2>
           <div class="mod-row">${(group.options || []).map((opt) => `
-            <button class="pill check ${selected.has(opt.id) ? "on" : ""}" type="button" data-multi="${escapeHtml(group.id)}" data-opt="${escapeHtml(opt.id)}">${escapeHtml(opt.label)}</button>
+            <button class="pill check ${selected.has(opt.id) ? "on" : ""}" type="button" data-multi="${escapeHtml(group.id)}" data-opt="${escapeHtml(opt.id)}">${optCaption(opt)}</button>
           `).join("")}</div></div>`;
       }
       const current = state.drinkMods[group.id];
-      return `<div class="mod-block"><h2>${escapeHtml(group.label)}</h2>
+      return `<div class="mod-block"><h2>${escapeHtml(group.label)}${hint}</h2>
         <div class="mod-row">${(group.options || []).map((opt) => `
-          <button class="pill check ${current === opt.id ? "on" : ""}" type="button" data-single="${escapeHtml(group.id)}" data-opt="${escapeHtml(opt.id)}">${escapeHtml(opt.label)}</button>
+          <button class="pill check ${current === opt.id ? "on" : ""}" type="button" data-single="${escapeHtml(group.id)}" data-opt="${escapeHtml(opt.id)}" data-optional="${required ? "0" : "1"}">${optCaption(opt)}</button>
         `).join("")}</div></div>`;
     }).join("");
+    const emptyMods = (drink.groups || []).length ? "" : `<p class="hint">No extra options — add it as-is, or change qty.</p>`;
     app.innerHTML = `
       <section class="screen">
         ${backLink("Drinks", "/order")}
         <div class="hero">${imgTag(drink.photo, drink.name)}</div>
         <h1 class="drink-title">${escapeHtml(drink.name)}</h1>
         <p class="drink-desc">${escapeHtml(drink.description)}</p>
+        ${emptyMods}
         ${groups}
         <div class="mod-block"><h2>Qty</h2>
           <div class="qty">
@@ -249,7 +259,11 @@
     app.querySelector("[data-go]")?.addEventListener("click", go);
     app.querySelectorAll("[data-single]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        state.drinkMods[btn.getAttribute("data-single")] = btn.getAttribute("data-opt");
+        const gid = btn.getAttribute("data-single");
+        const oid = btn.getAttribute("data-opt");
+        const optional = btn.getAttribute("data-optional") === "1";
+        if (optional && state.drinkMods[gid] === oid) state.drinkMods[gid] = "";
+        else state.drinkMods[gid] = oid;
         renderDrink(id);
       });
     });
@@ -257,9 +271,14 @@
       btn.addEventListener("click", () => {
         const gid = btn.getAttribute("data-multi");
         const oid = btn.getAttribute("data-opt");
+        const group = (drink.groups || []).find((g) => g.id === gid) || {};
         const cur = new Set(state.drinkMods[gid] || []);
         if (cur.has(oid)) cur.delete(oid);
-        else cur.add(oid);
+        else {
+          const max = Number(group.max_selected || 0);
+          if (max > 0 && cur.size >= max) return;
+          cur.add(oid);
+        }
         state.drinkMods[gid] = [...cur];
         renderDrink(id);
       });
@@ -558,7 +577,7 @@
     }
     const drinkMatch = path.match(/^\/order\/d\/([^/]+)$/);
     if (drinkMatch) {
-      renderDrink(drinkMatch[1]);
+      renderDrink(decodeURIComponent(drinkMatch[1]));
       return;
     }
     renderMenu();

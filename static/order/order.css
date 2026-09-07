@@ -122,7 +122,7 @@ body.order-app {
 .drink-list { display: grid; gap: 0.7rem; }
 .drink-card {
   display: grid;
-  grid-template-columns: 4.6rem 1fr auto;
+  grid-template-columns: 4.6rem 1fr;
   gap: 0.7rem;
   align-items: center;
   background: var(--paper);
@@ -139,7 +139,7 @@ body.order-app {
   border-radius: 10px;
   background: var(--blush-card);
 }
-.drink-card strong {
+.drink-card:active { background: var(--blush-card); }
   display: block;
   font-size: 1.02rem;
   font-weight: 700;
@@ -150,22 +150,6 @@ body.order-app {
   font-size: 0.9rem;
   margin-top: 0.1rem;
 }
-.add {
-  width: 2.55rem;
-  height: 2.55rem;
-  border-radius: 999px;
-  border: 1.5px solid var(--cocoa);
-  background: #fff;
-  color: var(--cocoa);
-  font-size: 1.45rem;
-  line-height: 1;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  padding: 0;
-}
-.add:active { background: var(--blush); }
-
 .hero {
   margin: 0 -1.05rem 0.9rem;
   background: #f3cfd3;
