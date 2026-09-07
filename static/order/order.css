@@ -241,6 +241,36 @@ body.order-app {
   background: var(--paper);
 }
 .pickup-box h2 { margin: 0 0 0.55rem; font-size: 1.05rem; }
+.tip-box { margin-top: 0; }
+.tip-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
+}
+.tip-row.two { grid-template-columns: 1fr 1fr; }
+.tip-btn {
+  width: 100%;
+  justify-content: center;
+  min-height: 2.85rem;
+  padding: 0.5rem 0.4rem;
+}
+.totals {
+  margin-top: 0.75rem;
+  padding-top: 0.7rem;
+  border-top: 1.5px solid var(--line);
+}
+.totals div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.28rem 0;
+}
+.totals-due {
+  font-weight: 800;
+  font-size: 1.08rem;
+  margin-top: 0.4rem;
+}
 .field { margin-top: 0.7rem; }
 .field label {
   display: block;

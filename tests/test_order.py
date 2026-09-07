@@ -88,6 +88,9 @@ def test_validate_cart_and_payment_link_body(monkeypatch) -> None:
     monkeypatch.delenv("SQUARE_ACCESS_TOKEN", raising=False)
     cart = order_svc.validate_cart(CART)
     assert cart["total_cents"] == 550 + 650
+    assert cart["subtotal_cents"] == 550 + 650
+    assert cart["tip_cents"] == 0
+    assert cart["tip_type"] == "none"
     assert cart["name"] == "Ronald"
     body = order_svc.build_payment_link_body(
         cart,
@@ -100,6 +103,8 @@ def test_validate_cart_and_payment_link_body(monkeypatch) -> None:
     assert body["order"]["location_id"] == "L4CK6YWGT5XQX"
     assert body["checkout_options"]["redirect_url"].endswith("/order/status")
     assert body["checkout_options"]["accepted_payment_methods"]["google_pay"] is True
+    assert body["checkout_options"]["allow_tipping"] is False
+    assert "service_charges" not in body["order"]
     assert body["order"]["fulfillments"][0]["type"] == "PICKUP"
     assert body["order"]["line_items"][0]["note"] == "Ronald"
     assert body["order"]["line_items"][1]["note"] == "Ronald"
@@ -179,6 +184,12 @@ def test_order_pages_and_assets() -> None:
     assert 'BRAND_LOGO = "/static/order/logo.svg"' in js.text
     assert "brand-mark" in js.text
     assert "We'll have it at pickup." in js.text
+    assert "No tip" in js.text
+    assert "Custom $" in js.text
+    assert 'data-tip="15"' in js.text
+    assert 'data-tip="18"' in js.text
+    assert 'data-tip="20"' in js.text
+    assert "Tip is added before checkout." in js.text
     assert "Square ready text" not in js.text
     logo = client.get("/static/order/logo.svg")
     assert logo.status_code == 200
@@ -186,6 +197,8 @@ def test_order_pages_and_assets() -> None:
     css = client.get("/static/order/order.css")
     assert css.status_code == 200
     assert "#e8b4b8" in css.text
+    assert ".tip-btn" in css.text
+    assert ".totals-due" in css.text
     photo = client.get("/static/order/drinks/viet-iced-coffee.svg")
     assert photo.status_code == 200
     tent = client.get("/order/tent")
@@ -367,6 +380,8 @@ def test_payment_link_body_uses_catalog_object_ids(monkeypatch) -> None:
     assert line["note"] == "Ronald"
     assert "to go" not in line["note"].casefold()
     assert "base_price_money" not in line
+    assert body["checkout_options"]["allow_tipping"] is False
+    assert "service_charges" not in body["order"]
     assert {m["catalog_object_id"] for m in line["modifiers"]} >= {
         MOD["condensed"],
         MOD["sweet-normal"],
@@ -567,3 +582,150 @@ def test_status_line_detail_ignores_name_note() -> None:
     view = order_svc.status_from_square_order(READY_ORDER, "OID")
     assert view["items"][0]["detail"] == "Condensed"
     assert "Ronald" not in view["items"][0]["detail"]
+
+
+def test_tip_percent_cents_half_up() -> None:
+    assert order_svc.tip_percent_cents(1200, 15) == 180
+    assert order_svc.tip_percent_cents(1200, 18) == 216
+    assert order_svc.tip_percent_cents(1200, 20) == 240
+    assert order_svc.tip_percent_cents(550, 18) == 99
+    assert order_svc.tip_percent_cents(401, 18) == 72  # 72.18 → 72
+    assert order_svc.tip_percent_cents(555, 18) == 100  # 99.9 → 100
+    assert order_svc.tip_percent_cents(1, 15) == 0
+    assert order_svc.tip_percent_cents(0, 18) == 0
+
+
+def test_parse_cart_tip_none_and_omitted() -> None:
+    assert order_svc.parse_cart_tip({}, 1200) == {
+        "tip_type": "none",
+        "tip_percent": 0,
+        "tip_cents": 0,
+    }
+    assert order_svc.parse_cart_tip({"tip": {"type": "none"}}, 1200)["tip_cents"] == 0
+    assert order_svc.parse_cart_tip({"tip": {"type": "custom", "amount_cents": 0}}, 1200)[
+        "tip_type"
+    ] == "none"
+
+
+def test_parse_cart_tip_percent_and_custom() -> None:
+    eighteen = order_svc.parse_cart_tip({"tip": {"type": "percent", "percent": 18}}, 1200)
+    assert eighteen == {"tip_type": "percent", "tip_percent": 18, "tip_cents": 216}
+    custom = order_svc.parse_cart_tip({"tip": {"type": "custom", "amount_cents": 250}}, 1200)
+    assert custom == {"tip_type": "custom", "tip_percent": 0, "tip_cents": 250}
+
+
+def test_parse_cart_tip_rejects_bad_values() -> None:
+    cases = [
+        {"tip": "18"},
+        {"tip": {"type": "percent", "percent": 25}},
+        {"tip": {"type": "percent"}},
+        {"tip": {"type": "custom", "amount_cents": -1}},
+        {"tip": {"type": "custom", "amount_cents": 10001}},
+        {"tip": {"type": "maybe"}},
+    ]
+    for body in cases:
+        try:
+            order_svc.parse_cart_tip(body, 1200)
+            assert False, f"expected OrderError for {body}"
+        except order_svc.OrderError as exc:
+            assert exc.status_code == 400
+
+
+def test_validate_cart_18_percent_tip(monkeypatch) -> None:
+    monkeypatch.delenv("SQUARE_ACCESS_TOKEN", raising=False)
+    cart = order_svc.validate_cart(dict(CART, tip={"type": "percent", "percent": 18}))
+    assert cart["subtotal_cents"] == 1200
+    assert cart["tip_type"] == "percent"
+    assert cart["tip_percent"] == 18
+    assert cart["tip_cents"] == 216
+    assert cart["total_cents"] == 1416
+
+
+def test_payment_link_body_includes_tip_service_charge(monkeypatch) -> None:
+    monkeypatch.delenv("SQUARE_ACCESS_TOKEN", raising=False)
+    cart = order_svc.validate_cart(dict(CART, tip={"type": "custom", "amount_cents": 200}))
+    body = order_svc.build_payment_link_body(
+        cart,
+        location_id="L4CK6YWGT5XQX",
+        redirect_url="https://example.run.app/order/status",
+        idempotency_key="tip-custom",
+    )
+    assert body["checkout_options"]["allow_tipping"] is False
+    charges = body["order"]["service_charges"]
+    assert len(charges) == 1
+    assert charges[0] == {
+        "name": "Tip",
+        "amount_money": {"amount": 200, "currency": "USD"},
+        "calculation_phase": "TOTAL_PHASE",
+        "taxable": False,
+        "scope": "ORDER",
+        "type": "CUSTOM",
+    }
+    assert "tip $2.00" in body["payment_note"]
+    names = [line["name"] for line in body["order"]["line_items"]]
+    assert "Tip" not in names
+
+
+def test_square_checkout_payload_has_no_tip_without_selection(monkeypatch) -> None:
+    monkeypatch.setenv("SQUARE_ACCESS_TOKEN", "sandbox-test-token-not-real")
+    monkeypatch.setenv("SQUARE_LOCATION_ID_IRONDALE", IRONDALE)
+    monkeypatch.setenv("BAKERY_SERVICE", "drinks")
+    fake = CatalogFakeClient(
+        payment_link={
+            "id": "LINKFAKE",
+            "order_id": "ORDERFAKE123456789",
+            "url": "https://square.link/u/fake",
+        }
+    )
+    result = order_svc.checkout(
+        dict(CATALOG_CART, tip={"type": "none"}),
+        origin="https://drinks.example",
+        client=fake,
+    )
+    assert result["tip_cents"] == 0
+    assert result["total_cents"] == result["subtotal_cents"]
+    payload = next(p for url, p in fake.calls if p and "online-checkout/payment-links" in url)
+    assert payload["checkout_options"]["allow_tipping"] is False
+    assert "service_charges" not in payload["order"]
+
+
+def test_square_checkout_payload_charges_percent_tip(monkeypatch) -> None:
+    monkeypatch.setenv("SQUARE_ACCESS_TOKEN", "sandbox-test-token-not-real")
+    monkeypatch.setenv("SQUARE_LOCATION_ID_IRONDALE", IRONDALE)
+    monkeypatch.setenv("BAKERY_SERVICE", "drinks")
+    fake = CatalogFakeClient(
+        payment_link={
+            "id": "LINKFAKE",
+            "order_id": "ORDERFAKE123456789",
+            "url": "https://square.link/u/fake",
+        }
+    )
+    result = order_svc.checkout(
+        dict(CATALOG_CART, tip={"type": "percent", "percent": 20}),
+        origin="https://drinks.example",
+        client=fake,
+    )
+    payload = next(p for url, p in fake.calls if p and "online-checkout/payment-links" in url)
+    charge = payload["order"]["service_charges"][0]
+    assert charge["name"] == "Tip"
+    assert charge["amount_money"]["amount"] == result["tip_cents"]
+    assert result["total_cents"] == result["subtotal_cents"] + result["tip_cents"]
+    assert result["tip_cents"] == order_svc.tip_percent_cents(result["subtotal_cents"], 20)
+    assert payload["checkout_options"]["allow_tipping"] is False
+    line = payload["order"]["line_items"][0]
+    assert line["catalog_object_id"] == VAR["viet"]
+    assert line["note"] == "Ronald"
+
+
+def test_laptop_demo_checkout_includes_tip_total(monkeypatch) -> None:
+    monkeypatch.delenv("SQUARE_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("BAKERY_SERVICE", "laptop")
+    res = client.post(
+        "/order/api/checkout",
+        json=dict(CART, tip={"type": "percent", "percent": 15}),
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["demo"] is True
+    assert data["tip_cents"] == 180
+    assert data["total_cents"] == 1380

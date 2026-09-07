@@ -6,6 +6,13 @@ modifier lists from Catalog at the Irondale location. Checkout line items
 use catalog variation / modifier object ids so paid orders match POS and
 still land on the drink board.
 
+Tip is chosen on /order/review (15 / 18 / 20 / custom / no tip). CreatePaymentLink
+cannot take Payment.tip_money, and checkout_options.allow_tipping only opens
+Square's hosted tip screen (Dashboard percentages, second ask after Pay). A
+preselected amount is sent as a non-taxable order service charge named Tip so
+the charged total matches the review screen. allow_tipping stays false so
+Square does not prompt again.
+
 Laptop with no token keeps DEMO_DRINKS so the UX can be clicked without
 Square. Cloud Run drinks always has a token and never uses that list.
 """
@@ -35,6 +42,8 @@ DEMO_MAKING_ID = "demo"
 DEMO_READY_ID = "demo-ready"
 READY_SMS_META = "qr_ready_sms"
 DEFAULT_TWILIO_API_BASE = "https://api.twilio.com"
+ALLOWED_TIP_PERCENTS = (15, 18, 20)
+TIP_CUSTOM_MAX_CENTS = 10_000
 
 _ready_sms_lock = threading.Lock()
 _ready_sms_attempted: set[str] = set()
@@ -620,6 +629,65 @@ def _pickup_label(pickup: str) -> str:
     return "to go" if pickup == "to-go" else "for here"
 
 
+def tip_percent_cents(subtotal_cents: int, percent: int) -> int:
+    """Half-up percent of the drink subtotal, in cents."""
+    if percent < 1 or subtotal_cents < 1:
+        return 0
+    return (int(subtotal_cents) * int(percent) + 50) // 100
+
+
+def parse_cart_tip(body: dict[str, Any], subtotal_cents: int) -> dict[str, Any]:
+    """Read checkout tip. Omitted / empty is no tip (the review-screen default)."""
+    raw = body.get("tip") if isinstance(body, dict) else None
+    if raw is None or raw == "" or raw == {}:
+        return {"tip_type": "none", "tip_percent": 0, "tip_cents": 0}
+    if not isinstance(raw, dict):
+        raise OrderError("Tip must be an object.")
+    kind = str(raw.get("type") or "none").strip().lower()
+    if kind in ("none", "no", "no-tip"):
+        return {"tip_type": "none", "tip_percent": 0, "tip_cents": 0}
+    if kind == "percent":
+        try:
+            percent = int(raw.get("percent"))
+        except (TypeError, ValueError) as exc:
+            raise OrderError("Tip percent must be 15, 18, or 20.") from exc
+        if percent not in ALLOWED_TIP_PERCENTS:
+            raise OrderError("Tip percent must be 15, 18, or 20.")
+        return {
+            "tip_type": "percent",
+            "tip_percent": percent,
+            "tip_cents": tip_percent_cents(subtotal_cents, percent),
+        }
+    if kind == "custom":
+        try:
+            amount = int(raw.get("amount_cents"))
+        except (TypeError, ValueError) as exc:
+            raise OrderError("Custom tip must be a dollar amount.") from exc
+        if amount < 0:
+            raise OrderError("Custom tip cannot be negative.")
+        if amount > TIP_CUSTOM_MAX_CENTS:
+            raise OrderError("Custom tip is too large.")
+        if amount == 0:
+            return {"tip_type": "none", "tip_percent": 0, "tip_cents": 0}
+        return {"tip_type": "custom", "tip_percent": 0, "tip_cents": amount}
+    raise OrderError("Choose 15%, 18%, 20%, custom, or no tip.")
+
+
+def tip_service_charge(tip_cents: int) -> dict[str, Any] | None:
+    """Order service charge Square will collect with the payment link."""
+    cents = int(tip_cents or 0)
+    if cents < 1:
+        return None
+    return {
+        "name": "Tip",
+        "amount_money": {"amount": cents, "currency": "USD"},
+        "calculation_phase": "TOTAL_PHASE",
+        "taxable": False,
+        "scope": "ORDER",
+        "type": "CUSTOM",
+    }
+
+
 def _order_number() -> str:
     now = datetime.now(CHICAGO)
     return str((now.hour * 60 + now.minute) % 90 + 10)
@@ -741,12 +809,17 @@ def validate_cart(body: dict[str, Any], *, client: httpx.Client | None = None) -
         total += line_cents * qty
     if total < 1:
         raise OrderError("Cart total is empty.")
+    tip = parse_cart_tip(body, total)
     return {
         "name": name,
         "pickup": pickup,
         "phone": phone,
         "items": lines,
-        "total_cents": total,
+        "subtotal_cents": total,
+        "tip_type": tip["tip_type"],
+        "tip_percent": tip["tip_percent"],
+        "tip_cents": tip["tip_cents"],
+        "total_cents": total + int(tip["tip_cents"]),
         "order_number": _order_number(),
     }
 
@@ -817,6 +890,8 @@ def build_payment_link_body(
         "checkout_options": {
             "redirect_url": redirect_url,
             "ask_for_shipping_address": False,
+            # Hosted Square tip UI is a second ask with Dashboard percentages.
+            # Review-screen tip is charged as order.service_charges below.
             "allow_tipping": False,
             "enable_coupon": False,
             "accepted_payment_methods": {
@@ -848,6 +923,11 @@ def build_payment_link_body(
             ],
         },
     }
+    charge = tip_service_charge(int(cart.get("tip_cents") or 0))
+    if charge:
+        body["order"]["service_charges"] = [charge]
+        tip_note = f" · tip ${(charge['amount_money']['amount'] / 100):.2f}"
+        body["payment_note"] = f"{cart['name']} · {pickup_note}{tip_note} · QR Irondale"
     if cart.get("phone"):
         body["pre_populated_data"] = {"buyer_phone_number": cart["phone"]}
     return body
@@ -916,6 +996,9 @@ def demo_checkout(cart: dict[str, Any]) -> dict[str, Any]:
         "payment_link_id": "",
         "status_url": f"/order/status?oid={DEMO_MAKING_ID}",
         "demo": True,
+        "subtotal_cents": int(cart.get("subtotal_cents") or cart.get("total_cents") or 0),
+        "tip_cents": int(cart.get("tip_cents") or 0),
+        "total_cents": int(cart.get("total_cents") or 0),
         "cart": _status_from_cart(cart, status="making"),
     }
 
@@ -928,6 +1011,8 @@ def checkout(body: dict[str, Any], *, origin: str, client: httpx.Client | None =
     if mode == "demo":
         return demo_checkout(cart)
     result = create_payment_link(cart, origin=origin, client=client)
+    result["subtotal_cents"] = cart["subtotal_cents"]
+    result["tip_cents"] = cart["tip_cents"]
     result["total_cents"] = cart["total_cents"]
     return result
 

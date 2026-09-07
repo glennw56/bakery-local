@@ -2,7 +2,7 @@
 
 Public beta, Irondale storefront only. Phone web app on the existing `bakery-drinks` Cloud Run service. No custom domain, no Cloud SQL, no Trussville. Ready SMS is env-gated Twilio on this same service (Square cannot text Orders API / payment-link pickups).
 
-Customer path: scan QR → `/order` → drinks + modifiers → Square hosted Checkout → `/order/status` (Paid / Making / Ready). Closing the tab still leaves the ticket on the public drink board (Square payment → existing getorders live pull).
+Customer path: scan QR → `/order` → drinks + modifiers → review (name, optional phone, tip) → Square hosted Checkout → `/order/status` (Paid / Making / Ready). Closing the tab still leaves the ticket on the public drink board (Square payment → existing getorders live pull).
 
 ## Catalog approach (Irondale QR)
 
@@ -13,6 +13,22 @@ Every POS option on that drink is returned (milk, sweet, sauce, flavor, matcha o
 Checkout `CreatePaymentLink` line items send **catalog variation `catalog_object_id`** and **modifier `catalog_object_id`s** (not fake ad-hoc names). Square prices and names the order like POS, so getorders / `is_drink` still put paid drinks on the board.
 
 Laptop with **no** `SQUARE_ACCESS_TOKEN` still serves the old demo six-drink list so `/order` can be clicked without Square. Cloud Run `bakery-drinks` has a token and never uses that demo list.
+
+## Tip (review screen → charged on the payment link)
+
+Ronald asked for a tip after the public beta. Tip lives on `/order/review` next to name / optional phone: **15%**, **18%**, **20%**, **Custom $**, **No tip**. The Pay button and a drinks / tip / total breakdown update before checkout.
+
+**Default is No tip.** This is a phone QR pickup flow (customer is already in the shop, not table service). One tap sets 15/18/20. Defaulting to a percentage on a self-order phone checkout is the pushy pattern we avoided.
+
+### Why a service charge, not Square hosted tipping
+
+`CreatePaymentLink` has no order-level `tip_money` you can set. `checkout_options.allow_tipping: true` only opens Square’s hosted tip screen (percentages come from Dashboard → Payments & orders → Payment links → Settings → General). That would move the choice off our review screen and ignore 15/18/20/custom.
+
+Supported path for a **preselected** amount on this checkout type: a non-taxable `order.service_charges` row named `Tip` (`TOTAL_PHASE`, `scope: ORDER`, `type: CUSTOM`). Square Checkout charges drinks + this amount. `allow_tipping` stays **false** so the hosted page does not ask again.
+
+No new env. No Square Dashboard tip-settings change. Same `ORDERS_WRITE` / `PAYMENTS_WRITE` token.
+
+Shop Tech note: Square’s own docs put **staff** gratuity on `Payment.tip_money`. Payment links do not let us set that field, so this tip reports as a **service charge** named Tip (receipt / order total), not Dashboard “tips” / tip-out. That is the tradeoff for keeping the picker on review with a live total. Do not also turn on hosted tipping or customers get asked twice.
 
 Replace SVG placeholders with photos by dropping `static/order/drinks/<stem>.jpg` (or `.png` / `.webp`) next to the svg. Catalog item images (https Square CDN URLs) win when present. Stems used as fallback: `viet-iced-coffee`, `hot-coffee`, `biscoff-coffee`, `matcha-latte`, `milk-tea`, `fruit-tea`. `Dockerfile.drinks` currently dockerignores `*.png` at the repo root — keep photos as `.jpg`/`.webp` or add `!static/order/**/*.png` if you must use png.
 
@@ -122,8 +138,8 @@ If `SQUARE_ACCESS_TOKEN` is unset on laptop, checkout is a **demo** that skips S
 
 1. Open `/order` on a phone (or desktop at phone width). Menu lists Coffee + Tea (and More if Catalog has other Drink items); not a photo dump. Drinks and every modifier come from Square Catalog, not a hardcoded list.
 2. Tap a drink. The **options / confirm screen always opens** before the cart — every Square modifier list for that drink (milk, sweet, sauce, flavor, matcha option, boba, …), plus qty. If Catalog has **zero** modifiers, the same step still shows the drink **name**, price, qty, and **Add to order**. There is no menu `+` that skips into the cart. Sticky **Review order** only after they confirm.
-3. Sticky **Review order · N drinks**. Name + to-go (or for here) on the same review screen. Optional phone only if Twilio is configured on the drinks service.
-4. **Pay now** → server `POST /order/api/checkout` → Square hosted Checkout (Apple Pay / Google Pay / card). Confirm the browser never receives `SQUARE_ACCESS_TOKEN`.
+3. Sticky **Review order · N drinks**. Name + to-go (or for here) on the same review screen. Optional phone only if Twilio is configured on the drinks service. Tip chips: 15% / 18% / 20% / Custom $ / No tip (default **No tip**). Drinks, tip, and new total update before Pay.
+4. **Pay now** → server `POST /order/api/checkout` → Square hosted Checkout (Apple Pay / Google Pay / card). Confirm the charged total includes the selected tip (order service charge named Tip) and Square does not show a second tip prompt. Confirm the browser never receives `SQUARE_ACCESS_TOKEN`.
 5. After pay, Square redirects to `/order/status`. Labels **Paid** and **Making** (not color-only). Copy is “We're making it” / “We'll text when it's at pickup” if a phone was given **and** Twilio is configured. Otherwise “We'll have it at pickup.”
 6. Kitchen `/board` shows the new Square order (getorders, same as POS drinks). No new ticket database.
 7. Tap the ticket off the board (or mark pickup ready in Square). Phone status becomes **Ready**, “Head to the pickup counter”, button **Go to pickup** — not “grab it” or “name on the cup”. Ready hero is the Sunshine's Bakery logo (`/static/order/logo.svg`), not a drink / coffee placeholder.

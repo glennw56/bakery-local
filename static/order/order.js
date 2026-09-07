@@ -17,11 +17,14 @@
     try {
       const raw = sessionStorage.getItem(CART_KEY);
       const data = raw ? JSON.parse(raw) : null;
-      if (data && Array.isArray(data.items)) return data;
+      if (data && Array.isArray(data.items)) {
+        if (!data.tip || typeof data.tip !== "object") data.tip = { type: "none" };
+        return data;
+      }
     } catch {
       /* ignore */
     }
-    return { items: [], pickup: "to-go", name: "", phone: "" };
+    return { items: [], pickup: "to-go", name: "", phone: "", tip: { type: "none" } };
   }
 
   function saveCart() {
@@ -106,8 +109,49 @@
     return state.cart.items.reduce((n, it) => n + lineCents(it), 0);
   }
 
+  function percentTipCents(subtotal, percent) {
+    if (percent < 1 || subtotal < 1) return 0;
+    return Math.floor((subtotal * percent + 50) / 100);
+  }
+
+  function parseCustomTipCents(raw) {
+    const text = String(raw ?? "").trim().replace(/^\$/, "").replace(/,/g, "");
+    if (!text) return 0;
+    const match = text.match(/^\d+(\.\d{0,2})?$/);
+    if (!match) return null;
+    return Math.round(Number(text) * 100);
+  }
+
+  function tipCents() {
+    const tip = state.cart.tip || { type: "none" };
+    const subtotal = cartTotal();
+    if (tip.type === "percent") return percentTipCents(subtotal, Number(tip.percent) || 0);
+    if (tip.type === "custom") {
+      const parsed = parseCustomTipCents(tip.amount_input);
+      if (parsed == null) return Number(tip.amount_cents) || 0;
+      return parsed;
+    }
+    return 0;
+  }
+
+  function payTotal() {
+    return cartTotal() + tipCents();
+  }
+
   function money(cents) {
     return `$${(cents / 100).toFixed(2)}`;
+  }
+
+  function tipPayload() {
+    const tip = state.cart.tip || { type: "none" };
+    if (tip.type === "percent") {
+      return { type: "percent", percent: Number(tip.percent) };
+    }
+    if (tip.type === "custom") {
+      const cents = parseCustomTipCents(tip.amount_input);
+      return { type: "custom", amount_cents: cents == null ? -1 : cents };
+    }
+    return { type: "none" };
   }
 
   function escapeHtml(value) {
@@ -342,7 +386,22 @@
       : mode === "demo"
         ? `<p class="banner">Laptop demo pay — no Square charge. Status screens still run.</p>`
         : "";
-    const cta = mode === "square" ? `Pay now · ${money(cartTotal())}` : mode === "demo" ? `Demo pay · ${money(cartTotal())}` : "Pay unavailable";
+    const subtotal = cartTotal();
+    const tip = tipCents();
+    const due = subtotal + tip;
+    const tipKind = state.cart.tip?.type || "none";
+    const tipPercent = Number(state.cart.tip?.percent) || 0;
+    const cta = mode === "square" ? `Pay now · ${money(due)}` : mode === "demo" ? `Demo pay · ${money(due)}` : "Pay unavailable";
+    const tipOn = (kind, extra) => {
+      if (kind === "percent") return tipKind === "percent" && tipPercent === extra ? "on" : "";
+      return tipKind === kind ? "on" : "";
+    };
+    const customField = tipKind === "custom"
+      ? `<div class="field">
+            <label for="tip-custom">Custom tip</label>
+            <input id="tip-custom" name="tip" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${escapeHtml(state.cart.tip?.amount_input || "")}">
+          </div>`
+      : "";
     app.innerHTML = `
       <section class="screen">
         <div class="brand-block">
@@ -366,7 +425,25 @@
             <input id="pickup-phone" name="phone" autocomplete="tel" inputmode="tel" placeholder="205…" value="${escapeHtml(state.cart.phone)}">
           </div>` : ""}
         </div>
-        <p class="pay-note">Apple Pay, card, or Google Pay.</p>
+        <div class="pickup-box tip-box">
+          <h2>Tip</h2>
+          <div class="tip-row">
+            <button class="pill tip-btn ${tipOn("percent", 15)}" type="button" data-tip="15">15%</button>
+            <button class="pill tip-btn ${tipOn("percent", 18)}" type="button" data-tip="18">18%</button>
+            <button class="pill tip-btn ${tipOn("percent", 20)}" type="button" data-tip="20">20%</button>
+          </div>
+          <div class="tip-row two">
+            <button class="pill tip-btn ${tipOn("custom")}" type="button" data-tip="custom">Custom $</button>
+            <button class="pill tip-btn ${tipOn("none")}" type="button" data-tip="none">No tip</button>
+          </div>
+          ${customField}
+          <div class="totals">
+            <div><span>Drinks</span><span>${money(subtotal)}</span></div>
+            <div><span>Tip</span><span>${money(tip)}</span></div>
+            <div class="totals-due"><span>Total</span><span>${money(due)}</span></div>
+          </div>
+        </div>
+        <p class="pay-note">Apple Pay, card, or Google Pay. Tip is added before checkout.</p>
         <p class="err" id="pay-err" hidden></p>
       </section>
       ${sticky(cta)}`;
@@ -391,6 +468,7 @@
     });
     const name = document.getElementById("pickup-name");
     const phone = document.getElementById("pickup-phone");
+    const tipCustom = document.getElementById("tip-custom");
     name?.addEventListener("input", () => {
       state.cart.name = name.value;
       saveCart();
@@ -398,6 +476,45 @@
     phone?.addEventListener("input", () => {
       state.cart.phone = phone.value;
       saveCart();
+    });
+    app.querySelectorAll("[data-tip]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const choice = btn.getAttribute("data-tip") || "none";
+        if (choice === "custom") {
+          state.cart.tip = {
+            type: "custom",
+            amount_input: state.cart.tip?.amount_input || "",
+            amount_cents: state.cart.tip?.amount_cents || 0,
+          };
+        } else if (choice === "none") {
+          state.cart.tip = { type: "none" };
+        } else {
+          state.cart.tip = { type: "percent", percent: Number(choice) };
+        }
+        saveCart();
+        renderReview();
+        if (choice === "custom") document.getElementById("tip-custom")?.focus();
+      });
+    });
+    tipCustom?.addEventListener("input", () => {
+      state.cart.tip = {
+        type: "custom",
+        amount_input: tipCustom.value,
+        amount_cents: parseCustomTipCents(tipCustom.value) || 0,
+      };
+      saveCart();
+      const dueNow = payTotal();
+      const modeNow = state.menu?.pay_mode || "off";
+      const ctaNow = document.getElementById("primary-cta");
+      if (ctaNow && !state.paying) {
+        ctaNow.textContent = modeNow === "square" ? `Pay now · ${money(dueNow)}` : modeNow === "demo" ? `Demo pay · ${money(dueNow)}` : "Pay unavailable";
+      }
+      const drinksEl = app.querySelector(".totals div:nth-child(1) span:last-child");
+      const tipEl = app.querySelector(".totals div:nth-child(2) span:last-child");
+      const dueEl = app.querySelector(".totals-due span:last-child");
+      if (tipEl) tipEl.textContent = money(tipCents());
+      if (dueEl) dueEl.textContent = money(dueNow);
+      if (drinksEl) drinksEl.textContent = money(cartTotal());
     });
     document.getElementById("primary-cta")?.addEventListener("click", pay);
   }
@@ -416,6 +533,23 @@
     }
     const mode = state.menu?.pay_mode || "off";
     if (mode === "off") return;
+    const tip = tipPayload();
+    if (tip.type === "custom" && (tip.amount_cents < 0 || Number.isNaN(tip.amount_cents))) {
+      if (err) {
+        err.hidden = false;
+        err.textContent = "Enter a custom tip like 1.00, or choose No tip.";
+      }
+      document.getElementById("tip-custom")?.focus();
+      return;
+    }
+    if (tip.type === "custom" && tip.amount_cents > 10000) {
+      if (err) {
+        err.hidden = false;
+        err.textContent = "Custom tip max is $100.00.";
+      }
+      document.getElementById("tip-custom")?.focus();
+      return;
+    }
     state.paying = true;
     const cta = document.getElementById("primary-cta");
     if (cta) {
@@ -431,6 +565,7 @@
           phone: state.menu?.ready_sms ? (state.cart.phone || "") : "",
           pickup: state.cart.pickup || "to-go",
           items: state.cart.items,
+          tip,
         }),
       });
       const data = await res.json().catch(() => ({}));
