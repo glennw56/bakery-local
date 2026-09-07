@@ -185,6 +185,11 @@ def test_order_pages_and_assets() -> None:
     assert "Tap a drink to choose options" in js.text
     assert 'BRAND_LOGO = "/static/order/logo.jpg"' in js.text
     assert "brand-mark" in js.text
+    assert "making-list" in js.text
+    assert "progress-banner" in js.text
+    assert "In progress" in js.text
+    assert "Paid. Kitchen has it" in js.text
+    assert "imgTag(hero" not in js.text
     assert "We'll have it at pickup." in js.text
     assert "No tip" in js.text
     assert "Custom $" in js.text
@@ -205,6 +210,8 @@ def test_order_pages_and_assets() -> None:
     assert "#e8b4b8" in css.text
     assert ".tip-btn" in css.text
     assert ".totals-due" in css.text
+    assert ".making-list" in css.text
+    assert ".progress-spinner" in css.text
     photo = client.get("/static/order/drinks/viet-iced-coffee.svg")
     assert photo.status_code == 200
     tent = client.get("/order/tent")
@@ -232,6 +239,7 @@ def test_laptop_demo_checkout(monkeypatch) -> None:
     body = status.json()
     assert body["status"] == "making"
     assert body["paid"] is True
+    assert [item["name"] for item in body["items"]] == ["Viet Iced Coffee", "Biscoff Coffee"]
     ready = client.get("/order/api/status?oid=demo-ready")
     assert ready.json()["status"] == "ready"
 

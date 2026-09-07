@@ -604,14 +604,28 @@
     </div>`;
   }
 
+  function makingListHtml(items) {
+    const rows = items.length ? items : [{ name: "Your drinks", detail: "", qty: 1 }];
+    return `<ul class="making-list">${rows.map((it) => {
+      const qty = Number(it.qty) > 1 ? ` ×${it.qty}` : "";
+      const detail = it.detail ? `<p>${escapeHtml(it.detail)}</p>` : "";
+      return `<li>
+        <div>
+          <h3>${escapeHtml(it.name || "Drink")}${qty}</h3>
+          ${detail}
+        </div>
+        <span class="making-chip"><span class="progress-dot" aria-hidden="true"></span> Making</span>
+      </li>`;
+    }).join("")}</ul>`;
+  }
+
   function renderStatus(payload) {
     const status = payload?.status || "pending";
     const items = payload?.items?.length ? payload.items : state.cart.items.map((it) => {
       const drink = drinkById(it.id);
-      return { name: drink?.name || it.id, detail: itemDetail(it), photo: drink?.photo, qty: it.qty };
+      return { name: drink?.name || it.id, detail: itemDetail(it), qty: it.qty };
     });
     const names = items.map((it) => it.name).filter(Boolean).join(" · ");
-    const hero = items[0]?.photo || "/static/order/drinks/viet-iced-coffee.svg";
     const pickup = payload?.pickup || (state.cart.pickup === "for-here" ? "for here" : "to go");
     const number = payload?.order_number || "—";
     const canText = Boolean(payload?.ready_sms ?? state.menu?.ready_sms);
@@ -650,18 +664,26 @@
         </section>`;
       return;
     }
+    const paid = status === "paid";
+    const sub = paid ? "Paid. Kitchen has it" : "We're making it";
+    const progressTitle = paid ? "Paid" : "In progress";
+    const progressBody = paid ? "Your drinks are in the kitchen." : "The kitchen is making your drinks.";
     app.innerHTML = `
       <section class="screen pad-status">
         <div class="brand-block">
           <h1 class="brand">Sunshine's</h1>
-          <p class="sub">We're making it</p>
+          <p class="sub">${sub}</p>
         </div>
-        ${stepperHtml("making")}
-        <article class="status-card">
-          ${imgTag(hero, items[0]?.name || "Drink")}
-        </article>
+        ${stepperHtml(paid ? "paid" : "making")}
+        <div class="progress-banner" role="status" aria-live="polite">
+          <span class="progress-spinner" aria-hidden="true"></span>
+          <div>
+            <strong>${progressTitle}</strong>
+            <p>${progressBody}</p>
+          </div>
+        </div>
         <p class="order-meta">Order ${escapeHtml(String(number))} • ${escapeHtml(pickup)}</p>
-        <p class="order-items">${items.map((it) => escapeHtml(it.name)).join("<br>")}</p>
+        ${makingListHtml(items)}
         <p class="order-note">${textOn ? "We'll text when it's at pickup." : "We'll have it at pickup."}</p>
       </section>
       ${sticky(textOn ? "We will text you" : "See you at pickup", "rose")}`;

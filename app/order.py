@@ -1217,7 +1217,10 @@ def lookup_status(
             "name": "",
             "text_opt_in": False,
             "ready_sms": ready_sms_configured(),
-            "items": [],
+            "items": [
+                {"name": "Viet Iced Coffee", "qty": 1, "detail": "Condensed milk"},
+                {"name": "Biscoff Coffee", "qty": 1, "detail": "Oat milk"},
+            ],
             "demo": True,
         }
     if oid == DEMO_READY_ID:
