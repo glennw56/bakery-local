@@ -23,6 +23,8 @@ DRINK_PHOTO_DIR = ROOT / "static" / "order" / "drinks"
 GENERIC_VARIATION_NAMES = frozenset(
     {"regular", "standard", "default", "item", "regular iced", "regular hot"}
 )
+# Live Irondale drinks are FOOD_AND_BEV (Square food/bev catalog), not BEVERAGE.
+_ITEM_PRODUCT_TYPES = frozenset({"REGULAR", "RETAIL_ITEM", "BEVERAGE", "FOOD_AND_BEV"})
 _TEA_NEEDLES = ("tea", "matcha", "boba", "lemonade", "chai")
 _COFFEE_NEEDLES = (
     "coffee",
@@ -431,7 +433,7 @@ def map_catalog_items(
             continue
         data = _item_data(item)
         product = str(data.get("product_type") or "REGULAR").upper()
-        if product and product not in ("REGULAR", "RETAIL_ITEM", "BEVERAGE"):
+        if product and product not in _ITEM_PRODUCT_TYPES:
             continue
         if data.get("is_archived"):
             continue

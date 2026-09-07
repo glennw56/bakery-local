@@ -163,7 +163,7 @@ def _item(
         "item_data": {
             "name": name,
             "description": description,
-            "product_type": "REGULAR",
+            "product_type": "FOOD_AND_BEV",
             "category_id": category_id,
             "categories": [{"id": category_id, "ordinal": 0}],
             "variations": variations,
