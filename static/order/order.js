@@ -436,12 +436,12 @@
             <button class="pill tip-btn ${tipOn("custom")}" type="button" data-tip="custom">Custom $</button>
             <button class="pill tip-btn ${tipOn("none")}" type="button" data-tip="none">No tip</button>
           </div>
-          ${customField}
           <div class="totals">
             <div><span>Drinks</span><span>${money(subtotal)}</span></div>
             <div><span>Tip</span><span>${money(tip)}</span></div>
             <div class="totals-due"><span>Total</span><span>${money(due)}</span></div>
           </div>
+          ${customField}
         </div>
         <p class="pay-note">Apple Pay, card, or Google Pay. Tip is added before checkout.</p>
         <p class="err" id="pay-err" hidden></p>
