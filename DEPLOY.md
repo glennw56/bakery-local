@@ -24,7 +24,9 @@ Ronald asked for a tip after the public beta. Tip lives on `/order/review` next 
 
 `CreatePaymentLink` has no order-level `tip_money` you can set. `checkout_options.allow_tipping: true` only opens Square’s hosted tip screen (percentages come from Dashboard → Payments & orders → Payment links → Settings → General). That would move the choice off our review screen and ignore 15/18/20/custom.
 
-Supported path for a **preselected** amount on this checkout type: a non-taxable `order.service_charges` row named `Tip` (`TOTAL_PHASE`, `scope: ORDER`, `type: CUSTOM`). Square Checkout charges drinks + this amount. `allow_tipping` stays **false** so the hosted page does not ask again.
+Supported path for a **preselected** amount on this checkout type: a non-taxable `order.service_charges` row named `Tip` (`amount_money`, `calculation_phase: TOTAL_PHASE`, `scope: ORDER`, `taxable: false`). Square Checkout charges drinks + this amount. `allow_tipping` stays **false** so the hosted page does not ask again.
+
+Do **not** send `service_charges[].type` (or `applied_money` / `total_money` / `total_tax_money`). `OrderServiceCharge.type` is **read-only** — Square calculates it. SHA `3e5e654` sent `"type": "CUSTOM"` and live Pay now failed with `Read-only field is calculated and cannot be set by a client.`
 
 No new env. No Square Dashboard tip-settings change. Same `ORDERS_WRITE` / `PAYMENTS_WRITE` token.
 

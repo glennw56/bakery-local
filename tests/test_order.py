@@ -659,8 +659,12 @@ def test_payment_link_body_includes_tip_service_charge(monkeypatch) -> None:
         "calculation_phase": "TOTAL_PHASE",
         "taxable": False,
         "scope": "ORDER",
-        "type": "CUSTOM",
     }
+    # Square OrderServiceCharge.type / applied_money / totals are read-only.
+    assert "type" not in charges[0]
+    assert "applied_money" not in charges[0]
+    assert "total_money" not in charges[0]
+    assert "total_tax_money" not in charges[0]
     assert "tip $2.00" in body["payment_note"]
     names = [line["name"] for line in body["order"]["line_items"]]
     assert "Tip" not in names
@@ -712,9 +716,47 @@ def test_square_checkout_payload_charges_percent_tip(monkeypatch) -> None:
     assert result["total_cents"] == result["subtotal_cents"] + result["tip_cents"]
     assert result["tip_cents"] == order_svc.tip_percent_cents(result["subtotal_cents"], 20)
     assert payload["checkout_options"]["allow_tipping"] is False
+    assert "type" not in charge
+    assert "applied_money" not in charge
     line = payload["order"]["line_items"][0]
     assert line["catalog_object_id"] == VAR["viet"]
     assert line["note"] == "Ronald"
+
+
+def test_tip_service_charge_omits_square_readonly_fields() -> None:
+    """Live 3e5e654 sent type=CUSTOM; Square rejected it as read-only."""
+    charge = order_svc.tip_service_charge(94)  # 15% of $6.25
+    assert charge is not None
+    assert charge["amount_money"]["amount"] == 94
+    assert set(charge) == {
+        "name",
+        "amount_money",
+        "calculation_phase",
+        "taxable",
+        "scope",
+    }
+    assert charge["name"] == "Tip"
+    assert charge["scope"] == "ORDER"
+    assert charge["calculation_phase"] == "TOTAL_PHASE"
+    assert charge["taxable"] is False
+    assert order_svc.tip_service_charge(0) is None
+
+
+def test_square_error_includes_readonly_field_name() -> None:
+    msg = order_svc._square_error_message(
+        {
+            "errors": [
+                {
+                    "code": "INVALID_VALUE",
+                    "detail": "Read-only field is calculated and cannot be set by a client.",
+                    "field": "order.service_charges[0].type",
+                    "category": "INVALID_REQUEST_ERROR",
+                }
+            ]
+        }
+    )
+    assert "Read-only field is calculated and cannot be set by a client." in msg
+    assert "order.service_charges[0].type" in msg
 
 
 def test_laptop_demo_checkout_includes_tip_total(monkeypatch) -> None:

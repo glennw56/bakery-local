@@ -11,7 +11,8 @@ cannot take Payment.tip_money, and checkout_options.allow_tipping only opens
 Square's hosted tip screen (Dashboard percentages, second ask after Pay). A
 preselected amount is sent as a non-taxable order service charge named Tip so
 the charged total matches the review screen. allow_tipping stays false so
-Square does not prompt again.
+Square does not prompt again. Do not send service_charges[].type — Square
+marks it read-only and rejects CreatePaymentLink with that field set.
 
 Laptop with no token keeps DEMO_DRINKS so the UX can be clicked without
 Square. Cloud Run drinks always has a token and never uses that list.
@@ -674,7 +675,14 @@ def parse_cart_tip(body: dict[str, Any], subtotal_cents: int) -> dict[str, Any]:
 
 
 def tip_service_charge(tip_cents: int) -> dict[str, Any] | None:
-    """Order service charge Square will collect with the payment link."""
+    """Fixed-amount Tip row for CreatePaymentLink.
+
+    Matches Square's documented courier-tip service charge. Do not send
+    type — OrderServiceCharge.type is read-only (Square calculates it).
+    Live 3e5e654 sent type=CUSTOM and Square returned
+    "Read-only field is calculated and cannot be set by a client."
+    Also omit applied_money / total_money / total_tax_money (read-only).
+    """
     cents = int(tip_cents or 0)
     if cents < 1:
         return None
@@ -684,7 +692,6 @@ def tip_service_charge(tip_cents: int) -> dict[str, Any] | None:
         "calculation_phase": "TOTAL_PHASE",
         "taxable": False,
         "scope": "ORDER",
-        "type": "CUSTOM",
     }
 
 
@@ -940,6 +947,9 @@ def _square_error_message(body: Any) -> str:
     if isinstance(errors, list) and errors:
         first = errors[0] if isinstance(errors[0], dict) else {}
         detail = str(first.get("detail") or first.get("code") or "").strip()
+        field = str(first.get("field") or "").strip()
+        if detail and field:
+            return f"{detail} ({field})"[:240]
         if detail:
             return detail[:240]
     return "Square checkout failed."
