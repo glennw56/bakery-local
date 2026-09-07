@@ -37,6 +37,10 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 | `GET /board/tickets` | Ticket-list fragment; HTMX polls every 10s |
 | `DELETE /board/tickets/{id}` | Tap-to-clear: drink is made, ticket drops off |
 | `POST /board/demo-tick` | Dev-only: insert a random demo drink (no Square) |
+| `GET /order` `GET /qr` | Irondale QR drink self-order (phone). `/qr` redirects to `/order` |
+| `GET /order/tent` | Printable table tent + QR for the live `/order` URL |
+| `POST /order/api/checkout` | Server mints a Square hosted payment link (token never in the browser) |
+| `GET /order/status` | Paid / Making / Ready after Square redirects back |
 | `GET /loyalty` | Member book: search, segment chips, hometown rollup, dense table |
 | `GET /loyalty.csv` | Same filters as the list, UTF-8 CSV attachment |
 | `GET /loyalty/{id}` | One-member dossier (balance, marketing, points ledger) |
@@ -189,10 +193,10 @@ Two services from this repo. Shop Tech does not `gcloud` or open billing.
 
 | Service | Image | Public | Routes |
 | --- | --- | --- | --- |
-| `bakery-drinks` | `Dockerfile.drinks` | private first, allUsers only after `/board` and `/health` work | `/board`, `/health`, `POST /internal/ingest` |
+| `bakery-drinks` | `Dockerfile.drinks` | private first, allUsers only after `/board` and `/health` work | `/board`, `/health`, `/order`, `/qr`, `POST /internal/ingest` |
 | `bakery-desk` | `Dockerfile.desk` | never allUsers until the password gate works | `/`, `/reports`, `/weekend`, `/loyalty`, `/notes` |
 
-`BAKERY_SERVICE=drinks` 404s `/loyalty` (real phones). Public drinks fetches `GETORDERS_URL` on every refresh, groups by order, and tap-to-clear hides that order on the tablet (cookie, not a ticket DB). New drink lines ding once on the drinks board (not first load, not tap-off, not an unchanged 10s poll). First tap is a full-screen overlay that plays a test ding (iPad Safari unlock; later polls reuse that audio). Cleared orders stay off that iPad via localStorage. Laptop ingest is unchanged when `GETORDERS_URL` is unset. `INGEST_KEY` and `SQUARE_ACCESS_TOKEN` come from Secret Manager, not git. Header `X-Ingest-Key`. Sqlite on Cloud Run min 0 is ephemeral; laptop still sqlite.
+`BAKERY_SERVICE=drinks` 404s `/loyalty` (real phones). Public drinks fetches `GETORDERS_URL` on every refresh, groups by order, and tap-to-clear hides that order on the tablet (cookie, not a ticket DB). Irondale QR order is `/order` on this same service: phone menu → Square CreatePaymentLink (token stays in Secret Manager) → status page. Paid drinks still land on the board the same way as POS (Square → getorders). See `DEPLOY.md` for env vars, token scopes, and how to print the tent QR. New drink lines ding once on the drinks board (not first load, not tap-off, not an unchanged 10s poll). First tap is a full-screen overlay that plays a test ding (iPad Safari unlock; later polls reuse that audio). Cleared orders stay off that iPad via localStorage. Laptop ingest is unchanged when `GETORDERS_URL` is unset. `INGEST_KEY` and `SQUARE_ACCESS_TOKEN` come from Secret Manager, not git. Header `X-Ingest-Key`. Sqlite on Cloud Run min 0 is ephemeral; laptop still sqlite.
 
 `BAKERY_SERVICE=desk` fetches `GETREPORTS_URL` on every `/reports` and `/weekend` refresh (parse-and-render, no sqlite upsert). Public getreports JSON is sales only (`ok`, `as_of`, `timezone`, `sales.today`, `sales.week`); `loyalty` is gated (`{"gated": true, "path": "/loyalty"}`). Desk pulls `/loyalty` **server-side only** when `INGEST_KEY` is set (header `X-Ingest-Key`, same secret as drinks ingest). Never fetch `/loyalty` from a public page or drinks. Never allUsers until the password gate works. Loyalty stays private. Laptop sqlite is unchanged when `GETREPORTS_URL` is unset. getreports does not send Saturday-vs-Saturday or drink×modifier rows; live weekend is today vs week-to-date from the same payload. `Dockerfile.desk` bakes `GETREPORTS_URL`; it does not bake `INGEST_KEY` or `ADMIN_PASSWORD`.
 

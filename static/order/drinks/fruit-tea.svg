@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Fruit tea">
+  <defs>
+    <pattern id="s6" width="26" height="400" patternUnits="userSpaceOnUse">
+      <rect width="26" height="400" fill="#f3c9ce"/>
+      <rect width="13" height="400" fill="#f7d9dc"/>
+    </pattern>
+  </defs>
+  <rect width="400" height="400" fill="url(#s6)"/>
+  <text x="24" y="82" font-family="Impact, Arial Black, sans-serif" font-size="46" fill="#ee8fa3">FRUIT</text>
+  <text x="24" y="126" font-family="Impact, Arial Black, sans-serif" font-size="46" fill="#ee8fa3">TEA</text>
+  <path d="M150 168h118l-14 150h-90z" fill="#f4ece4" stroke="#3f241c" stroke-width="4"/>
+  <path d="M158 186h102l-6 96H164z" fill="#f3a3b4"/>
+  <circle cx="176" cy="304" r="8" fill="#e85a7a"/>
+  <circle cx="196" cy="310" r="8" fill="#ffb347"/>
+  <circle cx="218" cy="306" r="8" fill="#7ad1a0"/>
+  <circle cx="188" cy="292" r="7" fill="#e85a7a"/>
+  <circle cx="210" cy="294" r="7" fill="#ffb347"/>
+  <path d="M148 160h122a18 10 0 0 1 0 16H148a18 10 0 0 1 0-16z" fill="#f7f3ee" stroke="#3f241c" stroke-width="4"/>
+</svg>

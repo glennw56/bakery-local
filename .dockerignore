@@ -10,4 +10,5 @@ data/*
 *.db-wal
 *.db-shm
 *.png
+!static/order/**/*.png
 .ruff_cache

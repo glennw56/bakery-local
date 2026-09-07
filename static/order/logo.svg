@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Sunshine's Bakery">
+  <circle cx="100" cy="100" r="96" fill="#f4d0d3" stroke="#3f241c" stroke-width="6"/>
+  <g transform="translate(100 78)">
+    <g fill="#e6b43a" stroke="#3f241c" stroke-width="2">
+      <ellipse cx="0" cy="-28" rx="12" ry="20"/>
+      <ellipse cx="0" cy="28" rx="12" ry="20"/>
+      <ellipse cx="-28" cy="0" rx="20" ry="12"/>
+      <ellipse cx="28" cy="0" rx="20" ry="12"/>
+      <ellipse cx="-20" cy="-20" rx="12" ry="18" transform="rotate(-45)"/>
+      <ellipse cx="20" cy="-20" rx="12" ry="18" transform="rotate(45)"/>
+      <ellipse cx="-20" cy="20" rx="12" ry="18" transform="rotate(45)"/>
+      <ellipse cx="20" cy="20" rx="12" ry="18" transform="rotate(-45)"/>
+    </g>
+    <circle r="16" fill="#7a4a1e" stroke="#3f241c" stroke-width="2"/>
+  </g>
+  <path d="M62 118c8 22 28 36 38 38 10-2 30-16 38-38" fill="#f2c9a8" stroke="#3f241c" stroke-width="3"/>
+  <circle cx="84" cy="122" r="3.2" fill="#3f241c"/>
+  <circle cx="116" cy="122" r="3.2" fill="#3f241c"/>
+  <path d="M92 134c5 5 11 5 16 0" fill="none" stroke="#3f241c" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M70 86c12-18 48-18 60 0" fill="none" stroke="#3f241c" stroke-width="4" stroke-linecap="round"/>
+  <text x="100" y="184" text-anchor="middle" font-family="Georgia, serif" font-size="13" font-weight="700" fill="#3f241c">Sunshine's</text>
+</svg>
