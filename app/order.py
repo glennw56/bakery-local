@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -32,6 +33,11 @@ DEFAULT_API_BASE = "https://connect.squareup.com"
 photo_url = catalog_svc.photo_url
 DEMO_MAKING_ID = "demo"
 DEMO_READY_ID = "demo-ready"
+READY_SMS_META = "qr_ready_sms"
+DEFAULT_TWILIO_API_BASE = "https://api.twilio.com"
+
+_ready_sms_lock = threading.Lock()
+_ready_sms_attempted: set[str] = set()
 
 # Laptop-only when SQUARE_ACCESS_TOKEN is unset. Live Irondale uses Catalog.
 DEMO_DRINKS: list[dict[str, Any]] = [
@@ -417,6 +423,7 @@ def menu_payload(*, client: httpx.Client | None = None) -> dict[str, Any]:
             "location": "Irondale",
             "pay_mode": pay_mode(),
             "source": source,
+            "ready_sms": ready_sms_configured(),
             "drinks": drinks,
         }
     except catalog_svc.CatalogError as exc:
@@ -425,6 +432,7 @@ def menu_payload(*, client: httpx.Client | None = None) -> dict[str, Any]:
             "pay_mode": pay_mode(),
             "source": "error",
             "catalog_error": exc.message,
+            "ready_sms": ready_sms_configured(),
             "drinks": [],
         }
 
@@ -451,6 +459,161 @@ def _normalize_phone(raw: str) -> str:
     if text.startswith("+") and 8 <= len(digits) <= 15:
         return "+" + digits
     return ""
+
+
+def twilio_account_sid() -> str:
+    return (os.environ.get("TWILIO_ACCOUNT_SID") or "").strip()
+
+
+def twilio_auth_token() -> str:
+    return (os.environ.get("TWILIO_AUTH_TOKEN") or "").strip()
+
+
+def twilio_from_number() -> str:
+    return (os.environ.get("TWILIO_FROM_NUMBER") or "").strip()
+
+
+def twilio_api_base() -> str:
+    return (os.environ.get("TWILIO_API_BASE") or DEFAULT_TWILIO_API_BASE).rstrip("/")
+
+
+def ready_sms_configured() -> bool:
+    """True only when Twilio secrets are present. Square cannot SMS Orders API pickups."""
+    return bool(twilio_account_sid() and twilio_auth_token() and twilio_from_number())
+
+
+def reset_ready_sms_state() -> None:
+    """Tests only."""
+    with _ready_sms_lock:
+        _ready_sms_attempted.clear()
+
+
+def ready_sms_body(name: str = "") -> str:
+    who = (name or "").strip()
+    if who:
+        return f"Sunshine's: {who}, your drink is ready. Head to the pickup counter."
+    return "Sunshine's: your drink is ready. Head to the pickup counter."
+
+
+def _pickup_recipient(order: dict[str, Any]) -> tuple[str, str]:
+    name = ""
+    phone = ""
+    for ful in order.get("fulfillments") or []:
+        if not isinstance(ful, dict):
+            continue
+        details = ful.get("pickup_details") or {}
+        if not isinstance(details, dict):
+            continue
+        recipient = details.get("recipient") or {}
+        if not isinstance(recipient, dict):
+            continue
+        name = str(recipient.get("display_name") or name).strip() or name
+        phone = str(recipient.get("phone_number") or phone).strip() or phone
+    return name, _normalize_phone(phone)
+
+
+def _order_metadata_sms_sent(order: dict[str, Any]) -> bool:
+    meta = order.get("metadata") if isinstance(order.get("metadata"), dict) else {}
+    flag = str(meta.get(READY_SMS_META) or "").strip().casefold()
+    return flag in ("1", "sent", "true", "yes")
+
+
+def _mark_ready_sms_on_order(
+    order_id: str,
+    order: dict[str, Any],
+    client: httpx.Client | None,
+) -> None:
+    token = square_token()
+    version = order.get("version")
+    if not token or version is None:
+        return
+    own = client is None
+    http = client or httpx.Client(timeout=15.0)
+    try:
+        http.put(
+            f"{square_api_base()}/v2/orders/{order_id}",
+            headers=square_headers(token),
+            json={
+                "order": {
+                    "version": version,
+                    "metadata": {READY_SMS_META: "sent"},
+                }
+            },
+        )
+    except Exception:
+        return
+    finally:
+        if own:
+            http.close()
+
+
+def send_ready_sms(
+    phone: str,
+    *,
+    name: str = "",
+    client: httpx.Client | None = None,
+) -> str:
+    """POST Twilio Messages. Returns ok | fail | retry. Never logs tokens."""
+    if not ready_sms_configured():
+        return "fail"
+    to = _normalize_phone(phone)
+    if not to:
+        return "fail"
+    sid = twilio_account_sid()
+    url = f"{twilio_api_base()}/2010-04-01/Accounts/{sid}/Messages.json"
+    own = client is None
+    http = client or httpx.Client(timeout=10.0)
+    try:
+        response = http.post(
+            url,
+            auth=(sid, twilio_auth_token()),
+            data={
+                "To": to,
+                "From": twilio_from_number(),
+                "Body": ready_sms_body(name),
+            },
+        )
+    except Exception:
+        return "retry"
+    finally:
+        if own:
+            http.close()
+    if 200 <= response.status_code < 300:
+        return "ok"
+    if 400 <= response.status_code < 500:
+        return "fail"
+    return "retry"
+
+
+def notify_order_ready(
+    order: dict[str, Any],
+    order_id: str,
+    *,
+    client: httpx.Client | None = None,
+) -> bool:
+    """Send one ready SMS if the customer left a phone and Twilio is configured.
+
+    Dedupes in-process and via Square order metadata so status polls cannot spam.
+    """
+    oid = (order_id or "").strip()
+    if not ready_sms_configured() or not looks_like_square_order_id(oid):
+        return False
+    name, phone = _pickup_recipient(order)
+    if not phone:
+        return False
+    with _ready_sms_lock:
+        if oid in _ready_sms_attempted or _order_metadata_sms_sent(order):
+            _ready_sms_attempted.add(oid)
+            return False
+        _ready_sms_attempted.add(oid)
+    result = send_ready_sms(phone, name=name, client=client)
+    if result == "ok":
+        _mark_ready_sms_on_order(oid, order, client)
+        return True
+    if result == "retry":
+        with _ready_sms_lock:
+            _ready_sms_attempted.discard(oid)
+    return False
 
 
 def _pickup_label(pickup: str) -> str:
@@ -620,14 +783,14 @@ def build_payment_link_body(
 ) -> dict[str, Any]:
     pickup_note = _pickup_label(cart["pickup"])
     line_items: list[dict[str, Any]] = []
+    customer_name = str(cart.get("name") or "").strip()
     for line in cart["items"]:
         modifiers = _line_item_modifiers(line)
-        note_bits = [bit for bit in (line.get("detail"), pickup_note, f"Name: {cart['name']}") if bit]
         catalog_id = str(line.get("catalog_object_id") or "").strip()
         item: dict[str, Any] = {
             "quantity": str(int(line["qty"])),
             "item_type": "ITEM",
-            "note": " · ".join(note_bits)[:500],
+            "note": customer_name[:500],
         }
         if catalog_id:
             item["catalog_object_id"] = catalog_id
@@ -782,6 +945,7 @@ def _status_from_cart(cart: dict[str, Any], status: str) -> dict[str, Any]:
         "pickup": _pickup_label(cart.get("pickup") or "to-go"),
         "name": cart.get("name") or "",
         "text_opt_in": bool(cart.get("phone")),
+        "ready_sms": ready_sms_configured(),
         "items": [
             {
                 "name": line["name"],
@@ -869,9 +1033,6 @@ def status_from_square_order(order: dict[str, Any], order_id: str) -> dict[str, 
         for mod in item.get("modifiers") or []:
             if isinstance(mod, dict) and mod.get("name"):
                 details.append(str(mod["name"]).strip())
-        note = str(item.get("note") or "").strip()
-        if note and not details:
-            details.append(note)
         items.append(
             {
                 "name": nm,
@@ -891,6 +1052,7 @@ def status_from_square_order(order: dict[str, Any], order_id: str) -> dict[str, 
         "pickup": pickup,
         "name": name,
         "text_opt_in": bool(phone),
+        "ready_sms": ready_sms_configured(),
         "items": items,
         "demo": False,
     }
@@ -959,6 +1121,7 @@ def lookup_status(
             "pickup": "to go",
             "name": "",
             "text_opt_in": False,
+            "ready_sms": ready_sms_configured(),
             "items": [],
             "demo": True,
         }
@@ -971,6 +1134,7 @@ def lookup_status(
             "pickup": "to go",
             "name": "",
             "text_opt_in": False,
+            "ready_sms": ready_sms_configured(),
             "items": [],
             "demo": True,
         }
@@ -981,7 +1145,13 @@ def lookup_status(
     order = retrieve_square_order(oid, client=client)
     if not order:
         raise OrderError("Order not found yet.", 404)
-    return status_from_square_order(order, oid)
+    view = status_from_square_order(order, oid)
+    if view["status"] == "ready":
+        try:
+            notify_order_ready(order, oid, client=client)
+        except Exception:
+            pass
+    return view
 
 
 def looks_like_square_order_id(order_id: str) -> bool:
@@ -1012,26 +1182,32 @@ def mark_pickup_prepared(order_id: str, client: httpx.Client | None = None) -> b
         if version is None:
             return False
         current = str(fulfillments[0].get("state") or "").upper()
-        if current in ("PREPARED", "COMPLETED"):
-            return True
-        uid = str(fulfillments[0]["uid"])
-        steps = ["PREPARED"] if current == "RESERVED" else ["RESERVED", "PREPARED"]
-        for state in steps:
-            response = http.put(
-                f"{square_api_base()}/v2/orders/{oid}",
-                headers=square_headers(token),
-                json={
-                    "order": {
-                        "version": version,
-                        "fulfillments": [{"uid": uid, "state": state}],
-                    }
-                },
-            )
-            body = response.json() if response.content else {}
-            updated = body.get("order") if isinstance(body, dict) else None
-            if response.status_code >= 400 or not isinstance(updated, dict):
-                return False
-            version = updated.get("version", version)
+        already_ready = current in ("PREPARED", "COMPLETED")
+        if not already_ready:
+            uid = str(fulfillments[0]["uid"])
+            steps = ["PREPARED"] if current == "RESERVED" else ["RESERVED", "PREPARED"]
+            for state in steps:
+                response = http.put(
+                    f"{square_api_base()}/v2/orders/{oid}",
+                    headers=square_headers(token),
+                    json={
+                        "order": {
+                            "version": version,
+                            "fulfillments": [{"uid": uid, "state": state}],
+                        }
+                    },
+                )
+                body = response.json() if response.content else {}
+                updated = body.get("order") if isinstance(body, dict) else None
+                if response.status_code >= 400 or not isinstance(updated, dict):
+                    return False
+                version = updated.get("version", version)
+        order = dict(order)
+        order["version"] = version
+        try:
+            notify_order_ready(order, oid, client=http)
+        except Exception:
+            pass
         return True
     finally:
         if own:

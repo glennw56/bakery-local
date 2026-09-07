@@ -1,6 +1,6 @@
 # Irondale QR drink order — Glenn deploy
 
-Public beta, Irondale storefront only. Phone web app on the existing `bakery-drinks` Cloud Run service. No custom domain, no Cloud SQL, no Twilio, no Trussville.
+Public beta, Irondale storefront only. Phone web app on the existing `bakery-drinks` Cloud Run service. No custom domain, no Cloud SQL, no Trussville. Ready SMS is env-gated Twilio on this same service (Square cannot text Orders API / payment-link pickups).
 
 Customer path: scan QR → `/order` → drinks + modifiers → Square hosted Checkout → `/order/status` (Paid / Making / Ready). Closing the tab still leaves the ticket on the public drink board (Square payment → existing getorders live pull).
 
@@ -31,8 +31,36 @@ Same secret pattern as ingest. **Never put a Square token in client JS, the imag
 | `GETORDERS_URL` | already set | Board live pull. Unchanged. |
 | `INGEST_KEY` | already set | Ingest hook only. Not used by `/order`. |
 | `BAKERY_SERVICE` | `drinks` | Baked in `Dockerfile.drinks`. |
+| `TWILIO_ACCOUNT_SID` | for ready SMS | Secret Manager. Twilio Account SID. |
+| `TWILIO_AUTH_TOKEN` | for ready SMS | Secret Manager. Never git, never `--set-env-vars`. |
+| `TWILIO_FROM_NUMBER` | for ready SMS | E.164 from-number, e.g. `+12055550100`. |
+| `TWILIO_API_BASE` | no | Default `https://api.twilio.com`. Tests only. |
 
 If all location vars are empty, code falls back to Irondale `L4CK6YWGT5XQX` (same default as laptop ingest). Shop 2 / Trussville is out of scope — do not point these vars at another location.
+
+### Ready SMS (Twilio)
+
+Square **does not** send pickup-ready texts for CreatePaymentLink / Orders API tickets. Passing the phone as fulfillment `recipient.phone_number` or Checkout `pre_populated_data` does not trigger Square Online / Restaurants order-ready SMS. That is why Ronald’s live beta order got no text.
+
+When all three Twilio vars are set on `bakery-drinks`, `/order` shows “Phone for a ready text (optional)”. One short SMS fires the first time that Square order is **Ready** (fulfillment `PREPARED` / `COMPLETED`):
+
+- Kitchen tap-to-clear on `/board` (`UpdateOrder` → `PREPARED`)
+- Customer `/order/status` poll after POS marks pickup ready
+
+Dedup: in-process set plus Square order metadata `qr_ready_sms=sent`. Status polls every 4s will not re-text.
+
+If any Twilio var is missing, the phone field is hidden and the Making copy is only “We'll have it at pickup.” — no promised text.
+
+Twilio is **not** billed to the bakery GCP project (stays off the ~$15/mo Cloud Run cap). Low-volume US SMS is typically a number (~$1.15/mo) plus ~$0.008/text. Use a verified US number (toll-free or 10DLC). No new Cloud Run service.
+
+```bash
+# after secrets exist in Secret Manager
+gcloud run services update bakery-drinks \
+  --region REGION \
+  --update-secrets TWILIO_ACCOUNT_SID=twilio-account-sid:latest,TWILIO_AUTH_TOKEN=twilio-auth-token:latest,TWILIO_FROM_NUMBER=twilio-from-number:latest
+```
+
+Do not put Twilio tokens in the image or git.
 
 ### Token scopes
 
@@ -44,7 +72,7 @@ If the ingest token is payments-read only, minting checkout links will 502 until
 
 Ready status: kitchen tap-to-clear on `/board` also tries `UpdateOrder` fulfillment → `PREPARED` when a token is present. The phone poll then shows **Ready** / “Head to the pickup counter” / **Go to pickup**. If Square rejects the update, the board still hides the ticket locally; the phone stays on Making until fulfillment is prepared in Square POS.
 
-Optional phone on the review screen is passed to Square pickup recipient / prepopulate. Square-native pickup texts only — no Twilio.
+Optional phone (only when Twilio is configured) is still stored on the Square pickup recipient so the drinks service can text on Ready. Line-item `note` is the customer name only — pickup “to go” / “for here” stays on fulfillment `pickup_details.note`, not duplicated onto every drink.
 
 ## Deploy Cloud Run (`bakery-drinks`)
 
@@ -94,13 +122,14 @@ If `SQUARE_ACCESS_TOKEN` is unset on laptop, checkout is a **demo** that skips S
 
 1. Open `/order` on a phone (or desktop at phone width). Menu lists Coffee + Tea (and More if Catalog has other Drink items); not a photo dump. Drinks and every modifier come from Square Catalog, not a hardcoded list.
 2. Tap a drink. The **options / confirm screen always opens** before the cart — every Square modifier list for that drink (milk, sweet, sauce, flavor, matcha option, boba, …), plus qty. If Catalog has **zero** modifiers, the same step still shows the drink **name**, price, qty, and **Add to order**. There is no menu `+` that skips into the cart. Sticky **Review order** only after they confirm.
-3. Sticky **Review order · N drinks**. Name + to-go (or for here) on the same review screen. Optional phone.
+3. Sticky **Review order · N drinks**. Name + to-go (or for here) on the same review screen. Optional phone only if Twilio is configured on the drinks service.
 4. **Pay now** → server `POST /order/api/checkout` → Square hosted Checkout (Apple Pay / Google Pay / card). Confirm the browser never receives `SQUARE_ACCESS_TOKEN`.
-5. After pay, Square redirects to `/order/status`. Labels **Paid** and **Making** (not color-only). Copy is “We're making it” / “We'll text when it's at pickup” if a phone was given.
+5. After pay, Square redirects to `/order/status`. Labels **Paid** and **Making** (not color-only). Copy is “We're making it” / “We'll text when it's at pickup” if a phone was given **and** Twilio is configured. Otherwise “We'll have it at pickup.”
 6. Kitchen `/board` shows the new Square order (getorders, same as POS drinks). No new ticket database.
-7. Tap the ticket off the board (or mark pickup ready in Square). Phone status becomes **Ready**, “Head to the pickup counter”, button **Go to pickup** — not “grab it” or “name on the cup”.
-8. Close the customer tab after pay: ticket still on the board.
+7. Tap the ticket off the board (or mark pickup ready in Square). Phone status becomes **Ready**, “Head to the pickup counter”, button **Go to pickup** — not “grab it” or “name on the cup”. Ready hero is the Sunshine's Bakery logo (`/static/order/logo.svg`), not a drink / coffee placeholder.
+8. If a phone was entered and Twilio is set: one SMS (“your drink is ready. Head to the pickup counter.”). Close the customer tab after pay: ticket still on the board; kitchen tap still sends the text.
+9. Square drink line notes are the pickup **name only**.
 
 ## Out of scope (do not add here)
 
-Trussville / shop 2, iPad kiosk hardware, Twilio SMS, custom domain sunshinebakeshop.com, bakery-desk redesign.
+Trussville / shop 2, iPad kiosk hardware, custom domain sunshinebakeshop.com, bakery-desk redesign. Do not add a second Cloud Run service for SMS.

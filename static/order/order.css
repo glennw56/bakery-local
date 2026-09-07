@@ -341,6 +341,11 @@ body.order-app {
   margin-bottom: 1rem;
 }
 .status-card img { width: 100%; display: block; aspect-ratio: 1; object-fit: cover; }
+.status-card img.brand-mark {
+  object-fit: contain;
+  background: #f6d7c3;
+  padding: 0.85rem 1.1rem 0.35rem;
+}
 .status-inner { padding: 0.9rem 1rem 1.1rem; }
 .status-inner h2 { margin: 0 0 0.35rem; font-size: 1.25rem; }
 .status-inner p { margin: 0; color: var(--cocoa-soft); }

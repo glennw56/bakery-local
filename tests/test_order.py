@@ -70,10 +70,12 @@ CATALOG_CART = {
 
 def setup_function() -> None:
     clear_menu_cache()
+    order_svc.reset_ready_sms_state()
 
 
 def teardown_function() -> None:
     clear_menu_cache()
+    order_svc.reset_ready_sms_state()
 
 
 def test_all_catalog_names_are_drinks() -> None:
@@ -99,7 +101,11 @@ def test_validate_cart_and_payment_link_body(monkeypatch) -> None:
     assert body["checkout_options"]["redirect_url"].endswith("/order/status")
     assert body["checkout_options"]["accepted_payment_methods"]["google_pay"] is True
     assert body["order"]["fulfillments"][0]["type"] == "PICKUP"
-    assert "Name: Ronald" in body["order"]["line_items"][0]["note"]
+    assert body["order"]["line_items"][0]["note"] == "Ronald"
+    assert body["order"]["line_items"][1]["note"] == "Ronald"
+    assert "to go" not in body["order"]["line_items"][0]["note"].casefold()
+    assert "QR Irondale" not in body["order"]["line_items"][0]["note"]
+    assert body["order"]["fulfillments"][0]["pickup_details"]["note"] == "to go"
     dump = str(body)
     assert "SQUARE_ACCESS_TOKEN" not in dump
     assert "EAA" not in dump
@@ -129,6 +135,7 @@ def test_menu_has_six_drinks_and_no_token() -> None:
     assert res.status_code == 200
     data = res.json()
     assert data["source"] == "demo"
+    assert data["ready_sms"] is False
     assert len(data["drinks"]) == 7
     assert all(d["photo"].startswith("/static/order/drinks/") for d in data["drinks"])
     ids = [d["id"] for d in data["drinks"]]
@@ -169,6 +176,13 @@ def test_order_pages_and_assets() -> None:
     assert "drink-step" in js.text
     assert "No extra options. Add" in js.text
     assert "Tap a drink to choose options" in js.text
+    assert 'BRAND_LOGO = "/static/order/logo.svg"' in js.text
+    assert "brand-mark" in js.text
+    assert "We'll have it at pickup." in js.text
+    assert "Square ready text" not in js.text
+    logo = client.get("/static/order/logo.svg")
+    assert logo.status_code == 200
+    assert "Sunshine" in logo.text
     css = client.get("/static/order/order.css")
     assert css.status_code == 200
     assert "#e8b4b8" in css.text
@@ -350,6 +364,8 @@ def test_payment_link_body_uses_catalog_object_ids(monkeypatch) -> None:
     line = body["order"]["line_items"][0]
     assert line["catalog_object_id"] == VAR["viet"]
     assert line["name"] == "Vietnamese Coffee"
+    assert line["note"] == "Ronald"
+    assert "to go" not in line["note"].casefold()
     assert "base_price_money" not in line
     assert {m["catalog_object_id"] for m in line["modifiers"]} >= {
         MOD["condensed"],
@@ -380,3 +396,174 @@ def test_catalog_error_menu_does_not_leak_token(monkeypatch) -> None:
     assert data["drinks"] == []
     assert "ITEMS_READ" in data["catalog_error"]
     assert "sandbox-test-token-not-real" not in str(data)
+
+
+class _Resp:
+    def __init__(self, status_code: int, body: dict | None = None):
+        self.status_code = status_code
+        self._body = body or {}
+        self.content = b"{}"
+
+    def json(self):
+        return self._body
+
+
+class ReadySmsFake:
+    """httpx-like: Square retrieve/update + Twilio Messages."""
+
+    def __init__(self, order: dict, *, twilio_status: int = 201):
+        self.order = dict(order)
+        self.twilio_status = twilio_status
+        self.posts: list[dict] = []
+        self.puts: list[dict] = []
+        self.gets: list[str] = []
+
+    def get(self, url, headers=None, params=None):
+        self.gets.append(url)
+        if "/v2/orders/" in url:
+            return _Resp(200, {"order": self.order})
+        return _Resp(404, {})
+
+    def put(self, url, headers=None, json=None):
+        self.puts.append({"url": url, "json": json})
+        version = int(self.order.get("version") or 1) + 1
+        patch = (json or {}).get("order") or {}
+        self.order["version"] = version
+        if "metadata" in patch:
+            meta = dict(self.order.get("metadata") or {})
+            meta.update(patch["metadata"])
+            self.order["metadata"] = meta
+        if "fulfillments" in patch and self.order.get("fulfillments"):
+            state = patch["fulfillments"][0].get("state")
+            if state:
+                self.order["fulfillments"][0]["state"] = state
+        return _Resp(200, {"order": self.order})
+
+    def post(self, url, headers=None, json=None, data=None, auth=None):
+        self.posts.append({"url": url, "json": json, "data": data, "auth": auth})
+        if "twilio.com" in url and "Messages.json" in url:
+            return _Resp(self.twilio_status, {"sid": "SMfake"})
+        return _Resp(404, {})
+
+    def close(self):
+        pass
+
+
+READY_ORDER = {
+    "version": 3,
+    "state": "OPEN",
+    "reference_id": "QR-14",
+    "tenders": [{"id": "t1", "type": "CARD"}],
+    "fulfillments": [
+        {
+            "uid": "ful1",
+            "state": "PREPARED",
+            "pickup_details": {
+                "note": "to go",
+                "recipient": {"display_name": "Ronald", "phone_number": "+12055550100"},
+            },
+        }
+    ],
+    "line_items": [
+        {
+            "name": "Vietnamese Coffee",
+            "quantity": "1",
+            "note": "Ronald",
+            "modifiers": [{"name": "Condensed"}],
+        }
+    ],
+}
+
+
+def _twilio_env(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_ACCOUNT_SID", "ACfakeaccountsid000000000000000")
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "fake-twilio-token-not-real")
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+12055550999")
+
+
+def test_menu_ready_sms_flag_when_twilio_configured(monkeypatch) -> None:
+    monkeypatch.delenv("SQUARE_ACCESS_TOKEN", raising=False)
+    _twilio_env(monkeypatch)
+    data = client.get("/order/api/menu").json()
+    assert data["ready_sms"] is True
+    js = client.get("/static/order/order.js").text
+    assert "Phone for a ready text (optional)" in js
+
+
+def test_ready_sms_sends_once_on_status_poll(monkeypatch) -> None:
+    monkeypatch.setenv("SQUARE_ACCESS_TOKEN", "sandbox-test-token-not-real")
+    _twilio_env(monkeypatch)
+    fake = ReadySmsFake(READY_ORDER)
+    first = order_svc.lookup_status(order_id="ORDERFAKE123456789", client=fake)
+    assert first["status"] == "ready"
+    assert first["ready_sms"] is True
+    assert first["text_opt_in"] is True
+    twilio = [p for p in fake.posts if p["data"] and "Messages.json" in p["url"]]
+    assert len(twilio) == 1
+    assert twilio[0]["data"]["To"] == "+12055550100"
+    assert "ready" in twilio[0]["data"]["Body"].casefold()
+    assert "pickup" in twilio[0]["data"]["Body"].casefold()
+    assert twilio[0]["auth"][0] == "ACfakeaccountsid000000000000000"
+    assert "fake-twilio-token-not-real" not in str(first)
+    second = order_svc.lookup_status(order_id="ORDERFAKE123456789", client=fake)
+    assert second["status"] == "ready"
+    twilio_again = [p for p in fake.posts if p["data"] and "Messages.json" in p["url"]]
+    assert len(twilio_again) == 1
+    meta_puts = [p for p in fake.puts if (p["json"] or {}).get("order", {}).get("metadata")]
+    assert meta_puts
+    assert meta_puts[0]["json"]["order"]["metadata"]["qr_ready_sms"] == "sent"
+
+
+def test_ready_sms_skipped_without_phone_or_twilio(monkeypatch) -> None:
+    monkeypatch.setenv("SQUARE_ACCESS_TOKEN", "sandbox-test-token-not-real")
+    monkeypatch.delenv("TWILIO_ACCOUNT_SID", raising=False)
+    monkeypatch.delenv("TWILIO_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("TWILIO_FROM_NUMBER", raising=False)
+    order = {
+        **READY_ORDER,
+        "fulfillments": [
+            {
+                "uid": "ful1",
+                "state": "PREPARED",
+                "pickup_details": {"note": "to go", "recipient": {"display_name": "Ronald"}},
+            }
+        ],
+    }
+    fake = ReadySmsFake(order)
+    view = order_svc.lookup_status(order_id="ORDERFAKE123456789", client=fake)
+    assert view["status"] == "ready"
+    assert view["ready_sms"] is False
+    assert fake.posts == []
+
+
+def test_ready_sms_on_board_mark_prepared(monkeypatch) -> None:
+    monkeypatch.setenv("SQUARE_ACCESS_TOKEN", "sandbox-test-token-not-real")
+    _twilio_env(monkeypatch)
+    making = dict(READY_ORDER)
+    making["fulfillments"] = [
+        {
+            "uid": "ful1",
+            "state": "PROPOSED",
+            "pickup_details": {
+                "note": "to go",
+                "recipient": {"display_name": "Ronald", "phone_number": "2055550100"},
+            },
+        }
+    ]
+    fake = ReadySmsFake(making)
+    assert order_svc.mark_pickup_prepared("ORDERFAKE123456789", client=fake) is True
+    twilio = [p for p in fake.posts if p.get("data") and "Messages.json" in p["url"]]
+    assert len(twilio) == 1
+    assert twilio[0]["data"]["To"] == "+12055550100"
+    states = [
+        ((p["json"] or {}).get("order") or {}).get("fulfillments", [{}])[0].get("state")
+        for p in fake.puts
+        if (p["json"] or {}).get("order", {}).get("fulfillments")
+    ]
+    assert "PREPARED" in states
+
+
+def test_status_line_detail_ignores_name_note() -> None:
+    view = order_svc.status_from_square_order(READY_ORDER, "OID")
+    assert view["items"][0]["detail"] == "Condensed"
+    assert "Ronald" not in view["items"][0]["detail"]

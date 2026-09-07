@@ -118,9 +118,11 @@
       .replace(/"/g, "&quot;");
   }
 
-  function imgTag(src, alt, cls) {
-    const fallback = "/static/order/drinks/viet-iced-coffee.svg";
-    return `<img class="${cls || ""}" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" onerror="this.onerror=null;this.src='${fallback}'">`;
+  const BRAND_LOGO = "/static/order/logo.svg";
+
+  function imgTag(src, alt, cls, fallback) {
+    const fb = fallback || "/static/order/drinks/viet-iced-coffee.svg";
+    return `<img class="${cls || ""}" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" onerror="this.onerror=null;this.src='${escapeHtml(fb)}'">`;
   }
 
   function sticky(label, extraClass = "") {
@@ -359,10 +361,10 @@
             <label for="pickup-name">Name for pickup</label>
             <input id="pickup-name" name="name" autocomplete="name" placeholder="Your name" maxlength="40" value="${escapeHtml(state.cart.name)}">
           </div>
-          <div class="field">
+          ${state.menu?.ready_sms ? `<div class="field">
             <label for="pickup-phone">Phone for a ready text (optional)</label>
             <input id="pickup-phone" name="phone" autocomplete="tel" inputmode="tel" placeholder="205…" value="${escapeHtml(state.cart.phone)}">
-          </div>
+          </div>` : ""}
         </div>
         <p class="pay-note">Apple Pay, card, or Google Pay.</p>
         <p class="err" id="pay-err" hidden></p>
@@ -426,7 +428,7 @@
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
           name,
-          phone: state.cart.phone || "",
+          phone: state.menu?.ready_sms ? (state.cart.phone || "") : "",
           pickup: state.cart.pickup || "to-go",
           items: state.cart.items,
         }),
@@ -477,7 +479,8 @@
     const hero = items[0]?.photo || "/static/order/drinks/viet-iced-coffee.svg";
     const pickup = payload?.pickup || (state.cart.pickup === "for-here" ? "for here" : "to go");
     const number = payload?.order_number || "—";
-    const textOn = payload?.text_opt_in || Boolean((state.cart.phone || "").trim());
+    const canText = Boolean(payload?.ready_sms ?? state.menu?.ready_sms);
+    const textOn = canText && (payload?.text_opt_in || Boolean((state.cart.phone || "").trim()));
     if (status === "ready") {
       app.innerHTML = `
         <section class="screen pad-status">
@@ -487,7 +490,7 @@
           </div>
           ${stepperHtml("ready")}
           <article class="status-card">
-            ${imgTag(hero, items[0]?.name || "Drink")}
+            ${imgTag(BRAND_LOGO, "Sunshine's Bakery", "brand-mark", BRAND_LOGO)}
             <div class="status-inner">
               <h2>Ready. Go to pickup.</h2>
               <p>${escapeHtml(names)}</p>
@@ -524,7 +527,7 @@
         </article>
         <p class="order-meta">Order ${escapeHtml(String(number))} • ${escapeHtml(pickup)}</p>
         <p class="order-items">${items.map((it) => escapeHtml(it.name)).join("<br>")}</p>
-        <p class="order-note">${textOn ? "We'll text when it's at pickup." : "We'll have it at pickup. Optional phone is only for a Square ready text."}</p>
+        <p class="order-note">${textOn ? "We'll text when it's at pickup." : "We'll have it at pickup."}</p>
       </section>
       ${sticky(textOn ? "We will text you" : "See you at pickup", "rose")}`;
   }
