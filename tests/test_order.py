@@ -187,8 +187,9 @@ def test_order_pages_and_assets() -> None:
     assert "brand-mark" in js.text
     assert "making-list" in js.text
     assert "progress-banner" in js.text
-    assert "In progress" in js.text
-    assert "Paid. Kitchen has it" in js.text
+    assert "pulse-making" in js.text
+    assert "We're making it" in js.text
+    assert "qty ${qty}" in js.text
     assert "imgTag(hero" not in js.text
     assert "We'll have it at pickup." in js.text
     assert "No tip" in js.text
@@ -212,6 +213,7 @@ def test_order_pages_and_assets() -> None:
     assert ".totals-due" in css.text
     assert ".making-list" in css.text
     assert ".progress-spinner" in css.text
+    assert ".pulse-making" in css.text
     photo = client.get("/static/order/drinks/viet-iced-coffee.svg")
     assert photo.status_code == 200
     tent = client.get("/order/tent")

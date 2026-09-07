@@ -390,12 +390,13 @@ body.order-app {
   padding: 0.85rem 1rem;
   margin: 0 0 0.9rem;
 }
-.progress-banner strong { display: block; font-size: 1.02rem; }
+.progress-banner strong { display: block; font-size: 1.08rem; }
 .progress-banner p {
   margin: 0.15rem 0 0;
   color: var(--cocoa-soft);
   font-size: 0.92rem;
 }
+.pulse-making { animation: pulse 1.2s ease-in-out infinite; }
 .progress-spinner {
   width: 1.35rem;
   height: 1.35rem;
@@ -422,7 +423,8 @@ body.order-app {
   background: var(--paper);
   border: 1.5px solid var(--cocoa);
   border-radius: 16px;
-  padding: 0.75rem 0.85rem;
+  padding: 0.9rem 1rem;
+  min-height: 4.4rem;
 }
 .making-list h3 { margin: 0; font-size: 1.02rem; }
 .making-list p {

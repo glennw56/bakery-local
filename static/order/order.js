@@ -607,12 +607,14 @@
   function makingListHtml(items) {
     const rows = items.length ? items : [{ name: "Your drinks", detail: "", qty: 1 }];
     return `<ul class="making-list">${rows.map((it) => {
-      const qty = Number(it.qty) > 1 ? ` ×${it.qty}` : "";
-      const detail = it.detail ? `<p>${escapeHtml(it.detail)}</p>` : "";
+      const qty = Math.max(1, Number(it.qty) || 1);
+      const bits = [];
+      if (it.detail) bits.push(String(it.detail));
+      bits.push(`qty ${qty}`);
       return `<li>
         <div>
-          <h3>${escapeHtml(it.name || "Drink")}${qty}</h3>
-          ${detail}
+          <h3>${escapeHtml(it.name || "Drink")}</h3>
+          <p>${escapeHtml(bits.join(" · "))}</p>
         </div>
         <span class="making-chip"><span class="progress-dot" aria-hidden="true"></span> Making</span>
       </li>`;
@@ -664,22 +666,18 @@
         </section>`;
       return;
     }
-    const paid = status === "paid";
-    const sub = paid ? "Paid. Kitchen has it" : "We're making it";
-    const progressTitle = paid ? "Paid" : "In progress";
-    const progressBody = paid ? "Your drinks are in the kitchen." : "The kitchen is making your drinks.";
     app.innerHTML = `
       <section class="screen pad-status">
         <div class="brand-block">
           <h1 class="brand">Sunshine's</h1>
-          <p class="sub">${sub}</p>
+          <p class="sub pulse-making">We're making it</p>
         </div>
-        ${stepperHtml(paid ? "paid" : "making")}
+        ${stepperHtml("making")}
         <div class="progress-banner" role="status" aria-live="polite">
           <span class="progress-spinner" aria-hidden="true"></span>
           <div>
-            <strong>${progressTitle}</strong>
-            <p>${progressBody}</p>
+            <strong class="pulse-making">We're making it</strong>
+            <p>Your drinks, as ordered.</p>
           </div>
         </div>
         <p class="order-meta">Order ${escapeHtml(String(number))} • ${escapeHtml(pickup)}</p>
