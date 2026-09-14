@@ -99,7 +99,9 @@ Optional phone (only when Twilio is configured) is still stored on the Square pi
 
 POST `/order/api/account/phone` (alias POST `/order/api/customer`) looks up or creates the Square customer and returns `ok`, `created`, `customer` (no email), `loyalty`, `orders`, plus `session_token` and `expires_at` (30 days). Loyalty enroll happens only when the POST body sets `join_loyalty` true. GET is read-only and never enrolls.
 
-The APK must store `session_token` and send it on later GETs (`GET /order/api/account`, `/order/api/customer`, `/order/api/account/status`, `/order/api/orders`) as `Authorization: Bearer <session_token>` or `X-Session-Token`. Phone or `customer_id` query params without a token return 401. Public JSON never includes email.
+POST `/order/api/account/profile` (alias POST `/order/api/customer/profile`) is for the Sunshine APK name form when Square has no given/family name. Body: `given_name`, `family_name`, `email` (all optional strings; at least one required). Email is validated lightly and sent to Square as `email_address`. Requires the same session token as GET (`Authorization: Bearer <session_token>` or `X-Session-Token`); 401 without it. The update target is the `customer_id` bound in the session — a body/query `customer_id` is ignored. Response matches login (`ok`, `customer` without email, `loyalty`, `orders`, refreshed `session_token` / `expires_at`).
+
+The APK must store `session_token` and send it on later GETs (`GET /order/api/account`, `/order/api/customer`, `/order/api/account/status`, `/order/api/orders`) and on profile POST as `Authorization: Bearer <session_token>` or `X-Session-Token`. Phone or `customer_id` query params without a token return 401. Public JSON never includes email.
 
 `SESSION_SECRET` is optional. If unset, the HMAC key is derived from `SQUARE_ACCESS_TOKEN` (rotating that token then signs out every APK session). Prefer a dedicated Secret Manager value for `SESSION_SECRET`. Never git.
 

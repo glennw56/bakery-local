@@ -8,7 +8,9 @@ This module has no invented customer directory. Every customer id comes
 from Square SearchCustomers / CreateCustomer.
 
 Phone login is POST-only and returns a short-lived HMAC session token.
-GET status / orders require that token. Public JSON never includes email.
+GET status / orders require that token. Profile update (name / email)
+uses the session customer_id — never a client-supplied id. Public JSON
+never includes email.
 """
 
 from __future__ import annotations
@@ -52,6 +54,9 @@ LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_PHONE_LIMIT = 10
 LOGIN_IP_LIMIT = 30
 RATE_LIMIT_MAX_KEYS = 10_000
+NAME_MAX = 100
+EMAIL_MAX = 254
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class AccountError(Exception):
@@ -481,6 +486,47 @@ def create_customer(phone: str, body: dict[str, Any], *, client: httpx.Client | 
     return customer
 
 
+def parse_profile_fields(body: dict[str, Any] | None) -> dict[str, str]:
+    """Sparse Square UpdateCustomer fields. Client ``email`` → ``email_address``."""
+    if not isinstance(body, dict):
+        raise AccountError("Enter a name or email.")
+    given = str(body.get("given_name") or "").strip()[:NAME_MAX]
+    family = str(body.get("family_name") or "").strip()[:NAME_MAX]
+    email = str(body.get("email") or "").strip()
+    fields: dict[str, str] = {}
+    if given:
+        fields["given_name"] = given
+    if family:
+        fields["family_name"] = family
+    if email:
+        if len(email) > EMAIL_MAX or not _EMAIL_RE.match(email):
+            raise AccountError("Enter a valid email address.")
+        fields["email_address"] = email
+    if not fields:
+        raise AccountError("Enter a name or email.")
+    return fields
+
+
+def update_customer(
+    customer_id: str,
+    fields: dict[str, str],
+    *,
+    version: int | None = None,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    cid = (customer_id or "").strip()
+    if not cid:
+        raise AccountError("Sign in required.", 401)
+    payload: dict[str, Any] = dict(fields)
+    if version is not None:
+        payload["version"] = version
+    updated = _square_json("PUT", f"/v2/customers/{cid}", payload, client=client)
+    customer = updated.get("customer")
+    if not isinstance(customer, dict) or not customer.get("id"):
+        raise AccountError("Square did not update the customer.", 502)
+    return customer
+
+
 def retrieve_customer(customer_id: str, *, client: httpx.Client | None = None) -> dict[str, Any] | None:
     cid = (customer_id or "").strip()
     if not cid:
@@ -726,6 +772,37 @@ def list_orders(customer_id: str = "", phone: str = "", *, client: httpx.Client 
     }
 
 
+def update_profile(
+    customer_id: str,
+    phone: str,
+    body: dict[str, Any] | None,
+    *,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    """Update the session-bound Square customer. Ignores body customer_id."""
+    cid = (customer_id or "").strip()
+    if not cid:
+        raise AccountError("Sign in required.", 401)
+    fields = parse_profile_fields(body)
+    existing = retrieve_customer(cid, client=client)
+    if existing is None:
+        raise AccountError("Square customer not found.", 404)
+    version: int | None = None
+    raw_version = existing.get("version")
+    if raw_version is not None:
+        try:
+            version = int(raw_version)
+        except (TypeError, ValueError):
+            version = None
+    customer = update_customer(cid, fields, version=version, client=client)
+    e164 = normalize_phone(phone) or str(customer.get("phone_number") or "").strip()
+    payload = _account_payload(customer, created=False, join_loyalty=False, client=client)
+    token, expires_at = mint_session_token(cid, e164)
+    payload["session_token"] = token
+    payload["expires_at"] = expires_at
+    return payload
+
+
 def _json_error(exc: AccountError):
     from fastapi.responses import JSONResponse
 
@@ -789,5 +866,14 @@ def mount(app) -> None:
         try:
             session = session_from_request(request)
             return list_orders(session["customer_id"], session["phone"])
+        except AccountError as exc:
+            return _json_error(exc)
+
+    @app.post("/order/api/account/profile")
+    @app.post("/order/api/customer/profile")
+    def order_api_account_profile(request: Request, body: dict = Body(...)):
+        try:
+            session = session_from_request(request)
+            return update_profile(session["customer_id"], session["phone"], body)
         except AccountError as exc:
             return _json_error(exc)

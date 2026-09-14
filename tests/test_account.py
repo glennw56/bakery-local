@@ -1,4 +1,4 @@
-"""Square phone-login privacy: session tokens, no email, GET is read-only."""
+"""Square phone-login privacy: session tokens, no email, GET is read-only, profile update."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ CUSTOMER = {
     "nickname": "",
     "email_address": "ada@example.com",
     "email": "ada@hidden.com",
+    "version": 4,
 }
 
 LOYALTY = {"enrolled": False, "account_id": "", "points": 0, "program_id": "PROG"}
@@ -31,16 +32,35 @@ def setup_function() -> None:
     account_svc.reset_login_rate_limits()
 
 
-def _stub_square(monkeypatch, *, enrolls=None) -> list:
+def _stub_square(monkeypatch, *, enrolls=None, updates=None) -> list:
     joins: list = enrolls if enrolls is not None else []
+    update_calls: list = updates if updates is not None else []
 
     def fake_enroll(phone, join, **kw):
         joins.append(bool(join))
         return dict(LOYALTY)
 
+    def fake_update(customer_id, fields, **kw):
+        update_calls.append(
+            {
+                "customer_id": customer_id,
+                "fields": dict(fields),
+                "version": kw.get("version"),
+            }
+        )
+        merged = dict(CUSTOMER)
+        if "given_name" in fields:
+            merged["given_name"] = fields["given_name"]
+        if "family_name" in fields:
+            merged["family_name"] = fields["family_name"]
+        if "email_address" in fields:
+            merged["email_address"] = fields["email_address"]
+        return merged
+
     monkeypatch.setattr(account_svc, "search_customer_by_phone", lambda *a, **k: CUSTOMER)
     monkeypatch.setattr(account_svc, "retrieve_customer", lambda *a, **k: CUSTOMER)
     monkeypatch.setattr(account_svc, "create_customer", lambda *a, **k: CUSTOMER)
+    monkeypatch.setattr(account_svc, "update_customer", fake_update)
     monkeypatch.setattr(account_svc, "enroll_loyalty", fake_enroll)
     monkeypatch.setattr(account_svc, "customer_orders", lambda *a, **k: [])
     monkeypatch.setattr(account_svc, "open_queue_orders", lambda *a, **k: [])
@@ -213,3 +233,157 @@ def test_login_rate_limit_by_ip(monkeypatch) -> None:
         assert response.status_code == 200, phone
     blocked = client.post("/order/api/account/phone", json={"phone": "2055559999"})
     assert blocked.status_code == 429
+
+
+def test_parse_profile_fields_requires_one_valid_value() -> None:
+    with pytest.raises(account_svc.AccountError) as empty:
+        account_svc.parse_profile_fields({})
+    assert empty.value.status_code == 400
+    with pytest.raises(account_svc.AccountError):
+        account_svc.parse_profile_fields({"given_name": "  ", "email": ""})
+    with pytest.raises(account_svc.AccountError) as bad_email:
+        account_svc.parse_profile_fields({"email": "not-an-email"})
+    assert "email" in bad_email.value.message.lower()
+    assert account_svc.parse_profile_fields({"given_name": "Ada"}) == {"given_name": "Ada"}
+    assert account_svc.parse_profile_fields({"email": "ada@example.com"}) == {
+        "email_address": "ada@example.com"
+    }
+    parsed = account_svc.parse_profile_fields(
+        {"given_name": "Ada", "family_name": "Lovelace", "email": "ada@bakery.test"}
+    )
+    assert parsed == {
+        "given_name": "Ada",
+        "family_name": "Lovelace",
+        "email_address": "ada@bakery.test",
+    }
+
+
+def test_update_customer_put_targets_path_id(monkeypatch) -> None:
+    calls: list = []
+
+    def fake_square(method, path, payload=None, **kw):
+        calls.append((method, path, payload))
+        return {"customer": {"id": "CUST_ADA", "given_name": payload.get("given_name")}}
+
+    monkeypatch.setattr(account_svc, "_square_json", fake_square)
+    customer = account_svc.update_customer("CUST_ADA", {"given_name": "Ada"}, version=3)
+    assert customer["id"] == "CUST_ADA"
+    assert calls == [
+        ("PUT", "/v2/customers/CUST_ADA", {"given_name": "Ada", "version": 3}),
+    ]
+
+
+def test_update_profile_ignores_body_customer_id(monkeypatch) -> None:
+    updates: list = []
+    _stub_square(monkeypatch, updates=updates)
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    payload = account_svc.update_profile(
+        "CUST_ADA",
+        "+12055550100",
+        {"given_name": "Ada", "customer_id": "EVIL_CUSTOMER"},
+    )
+    assert updates == [
+        {"customer_id": "CUST_ADA", "fields": {"given_name": "Ada"}, "version": 4}
+    ]
+    assert payload["ok"] is True
+    assert payload["created"] is False
+    assert payload["customer"]["id"] == "CUST_ADA"
+    assert payload["customer"]["given_name"] == "Ada"
+    assert "email" not in payload["customer"]
+    assert "email_address" not in payload["customer"]
+    assert payload["session_token"]
+    assert "ada@example.com" not in str(payload)
+
+
+def test_post_profile_without_token_is_401() -> None:
+    for path in ("/order/api/account/profile", "/order/api/customer/profile"):
+        response = client.post(path, json={"given_name": "Ada"})
+        assert response.status_code == 401, path
+        body = response.json()
+        assert body["ok"] is False
+        assert "email" not in body
+        assert "customer" not in body
+
+
+def test_post_profile_empty_body_is_400(monkeypatch) -> None:
+    _stub_square(monkeypatch)
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    token, _ = account_svc.mint_session_token("CUST_ADA", "+12055550100")
+    response = client.post(
+        "/order/api/account/profile",
+        json={},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 400
+    assert response.json()["ok"] is False
+
+
+def test_post_profile_invalid_email_is_400(monkeypatch) -> None:
+    _stub_square(monkeypatch)
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    token, _ = account_svc.mint_session_token("CUST_ADA", "+12055550100")
+    response = client.post(
+        "/order/api/account/profile",
+        json={"email": "ada-at-bakery"},
+        headers={"X-Session-Token": token},
+    )
+    assert response.status_code == 400
+    assert response.json()["ok"] is False
+
+
+def test_post_profile_updates_square_and_strips_email(monkeypatch) -> None:
+    updates: list = []
+    joins = _stub_square(monkeypatch, updates=updates)
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    posted = client.post("/order/api/account/phone", json={"phone": "2055550100"})
+    token = posted.json()["session_token"]
+    joins.clear()
+    response = client.post(
+        "/order/api/account/profile",
+        json={
+            "given_name": "Ada",
+            "family_name": "Lovelace",
+            "email": "ada@example.com",
+            "customer_id": "EVIL_CUSTOMER",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["customer"]["id"] == "CUST_ADA"
+    assert data["customer"]["given_name"] == "Ada"
+    assert "email" not in data["customer"]
+    assert "email_address" not in data["customer"]
+    assert "ada@example.com" not in str(data)
+    assert data["session_token"]
+    assert updates == [
+        {
+            "customer_id": "CUST_ADA",
+            "fields": {
+                "given_name": "Ada",
+                "family_name": "Lovelace",
+                "email_address": "ada@example.com",
+            },
+            "version": 4,
+        }
+    ]
+    assert joins == [False]
+
+
+def test_post_customer_profile_alias(monkeypatch) -> None:
+    updates: list = []
+    _stub_square(monkeypatch, updates=updates)
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    token, _ = account_svc.mint_session_token("CUST_ADA", "+12055550100")
+    response = client.post(
+        "/order/api/customer/profile",
+        json={"family_name": "Lovelace"},
+        headers={"X-Session-Token": token},
+    )
+    assert response.status_code == 200
+    assert response.json()["customer"]["family_name"] == "Lovelace"
+    assert "email" not in response.json()["customer"]
+    assert updates == [
+        {"customer_id": "CUST_ADA", "fields": {"family_name": "Lovelace"}, "version": 4}
+    ]
