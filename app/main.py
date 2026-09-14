@@ -34,6 +34,7 @@ from app import weekend as weekend_svc
 from app import getreports as getreports_svc
 from app import auth as desk_auth
 from app import order as order_svc
+from app import account as account_svc
 
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = ROOT / "templates"
@@ -318,6 +319,9 @@ def order_api_status(
         )
     except order_svc.OrderError as exc:
         return JSONResponse({"error": exc.message}, status_code=exc.status_code)
+
+
+account_svc.mount(app)
 
 
 
