@@ -6,13 +6,23 @@ stays in env / Secret Manager — never in the APK.
 
 This module has no invented customer directory. Every customer id comes
 from Square SearchCustomers / CreateCustomer.
+
+Phone login is POST-only and returns a short-lived HMAC session token.
+GET status / orders require that token. Public JSON never includes email.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import os
 import re
+import threading
+import time
 import uuid
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -31,6 +41,12 @@ DEFAULT_LOCATION_ID = "L4CK6YWGT5XQX"
 DEFAULT_API_BASE = "https://connect.squareup.com"
 READY_FULFILLMENT = frozenset({"PREPARED", "COMPLETED"})
 QUEUE_FULFILLMENT = frozenset({"PROPOSED", "RESERVED"})
+SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+SESSION_NS = b"bakery-account-session-v1"
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_PHONE_LIMIT = 10
+LOGIN_IP_LIMIT = 30
+RATE_LIMIT_MAX_KEYS = 10_000
 
 
 class AccountError(Exception):
@@ -38,6 +54,156 @@ class AccountError(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+
+
+class SlidingWindowLimiter:
+    """In-memory sliding window. Per Cloud Run instance; resets on scale-to-zero."""
+
+    def __init__(self, limit: int, window_seconds: int):
+        self.limit = limit
+        self.window = window_seconds
+        self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    def hit(self, key: str) -> bool:
+        now = time.monotonic()
+        cutoff = now - self.window
+        with self._lock:
+            q = self._hits[key]
+            while q and q[0] < cutoff:
+                q.popleft()
+            if len(q) >= self.limit:
+                return False
+            q.append(now)
+            if len(self._hits) > RATE_LIMIT_MAX_KEYS:
+                dead = [k for k, bucket in self._hits.items() if not bucket or bucket[-1] < cutoff]
+                for k in dead:
+                    self._hits.pop(k, None)
+            return True
+
+    def reset(self) -> None:
+        with self._lock:
+            self._hits.clear()
+
+
+_phone_limiter = SlidingWindowLimiter(LOGIN_PHONE_LIMIT, LOGIN_WINDOW_SECONDS)
+_ip_limiter = SlidingWindowLimiter(LOGIN_IP_LIMIT, LOGIN_WINDOW_SECONDS)
+
+
+def reset_login_rate_limits() -> None:
+    _phone_limiter.reset()
+    _ip_limiter.reset()
+
+
+def check_login_rate(ip: str, phone: str) -> None:
+    ip_key = (ip or "").strip() or "unknown"
+    if not _ip_limiter.hit(ip_key):
+        raise AccountError("Too many sign-in attempts. Try again later.", 429)
+    if phone and not _phone_limiter.hit(phone):
+        raise AccountError("Too many sign-in attempts. Try again later.", 429)
+
+
+def _session_key() -> bytes:
+    secret = (os.environ.get("SESSION_SECRET") or "").strip()
+    if secret:
+        return hmac.new(SESSION_NS, secret.encode("utf-8"), hashlib.sha256).digest()
+    token = (os.environ.get("SQUARE_ACCESS_TOKEN") or "").strip()
+    if token:
+        return hmac.new(SESSION_NS, token.encode("utf-8"), hashlib.sha256).digest()
+    return hmac.new(SESSION_NS, b"dev", hashlib.sha256).digest()
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(raw: str) -> bytes:
+    pad = "=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode(raw + pad)
+
+
+def _mac_ok(got: str, expected: str) -> bool:
+    if not isinstance(got, str) or not isinstance(expected, str):
+        return False
+    if len(got) != len(expected):
+        return False
+    return hmac.compare_digest(got, expected)
+
+
+def mint_session_token(
+    customer_id: str,
+    phone: str,
+    *,
+    now: int | None = None,
+    ttl: int = SESSION_TTL_SECONDS,
+) -> tuple[str, str]:
+    exp = int(now if now is not None else time.time()) + int(ttl)
+    payload = json.dumps(
+        {"v": 1, "cid": customer_id, "phone": phone, "exp": exp},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    blob = _b64url_encode(payload.encode("utf-8"))
+    mac = hmac.new(_session_key(), blob.encode("ascii"), hashlib.sha256).hexdigest()
+    expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f"{blob}.{mac}", expires_at
+
+
+def verify_session_token(token: str, *, now: int | None = None) -> dict[str, Any]:
+    raw = (token or "").strip()
+    if not raw or "." not in raw:
+        raise AccountError("Sign in required.", 401)
+    blob, mac = raw.rsplit(".", 1)
+    expected = hmac.new(_session_key(), blob.encode("ascii"), hashlib.sha256).hexdigest()
+    if not _mac_ok(mac, expected):
+        raise AccountError("Session expired or invalid.", 401)
+    try:
+        data = json.loads(_b64url_decode(blob).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        raise AccountError("Session expired or invalid.", 401)
+    if not isinstance(data, dict) or data.get("v") != 1:
+        raise AccountError("Session expired or invalid.", 401)
+    try:
+        exp = int(data.get("exp") or 0)
+    except (TypeError, ValueError):
+        raise AccountError("Session expired or invalid.", 401)
+    clock = int(now if now is not None else time.time())
+    if exp < clock:
+        raise AccountError("Session expired or invalid.", 401)
+    cid = str(data.get("cid") or "").strip()
+    phone = str(data.get("phone") or "").strip()
+    if not cid or not phone:
+        raise AccountError("Session expired or invalid.", 401)
+    return {"customer_id": cid, "phone": phone, "exp": exp}
+
+
+def token_from_headers(authorization: str = "", x_session_token: str = "") -> str:
+    auth = (authorization or "").strip()
+    if len(auth) >= 7 and auth[:7].lower() == "bearer ":
+        return auth[7:].strip()
+    return (x_session_token or "").strip()
+
+
+def wants_loyalty(body: dict[str, Any] | None) -> bool:
+    """Loyalty enroll only when the client explicitly opts in."""
+    if not isinstance(body, dict):
+        return False
+    raw = body.get("join_loyalty", False)
+    if raw is True:
+        return True
+    if isinstance(raw, (int, float)) and raw == 1:
+        return True
+    if isinstance(raw, str) and raw.strip().lower() in ("1", "true", "yes"):
+        return True
+    return False
+
+
+def client_ip(headers: dict[str, str] | None, host: str = "") -> str:
+    if headers:
+        forwarded = (headers.get("x-forwarded-for") or headers.get("X-Forwarded-For") or "").strip()
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return (host or "").strip()
 
 
 def normalize_phone(raw: str) -> str:
@@ -70,6 +236,7 @@ def display_name(customer: dict[str, Any]) -> str:
 
 
 def customer_public(customer: dict[str, Any]) -> dict[str, Any]:
+    """APK-facing customer JSON. Email is never included."""
     phone = str(customer.get("phone_number") or customer.get("phone") or "").strip()
     return {
         "id": str(customer.get("id") or "").strip(),
@@ -78,7 +245,6 @@ def customer_public(customer: dict[str, Any]) -> dict[str, Any]:
         "family_name": str(customer.get("family_name") or "").strip(),
         "nickname": str(customer.get("nickname") or "").strip(),
         "display_name": display_name(customer),
-        "email": str(customer.get("email_address") or customer.get("email") or "").strip(),
     }
 
 
@@ -510,22 +676,29 @@ def login_or_signup(body: dict[str, Any], *, client: httpx.Client | None = None)
     phone = normalize_phone(str(body.get("phone") or ""))
     if not phone:
         raise AccountError("Enter a US phone number (10 digits).")
-    join = bool(body.get("join_loyalty", True))
+    join = wants_loyalty(body)
     existing = search_customer_by_phone(phone, client=client)
     if existing:
-        return _account_payload(existing, created=False, join_loyalty=join, client=client)
-    created = create_customer(phone, body, client=client)
-    return _account_payload(created, created=True, join_loyalty=join, client=client)
+        payload = _account_payload(existing, created=False, join_loyalty=join, client=client)
+    else:
+        created = create_customer(phone, body, client=client)
+        payload = _account_payload(created, created=True, join_loyalty=join, client=client)
+    cid = str(payload["customer"].get("id") or "").strip()
+    token, expires_at = mint_session_token(cid, phone)
+    payload["session_token"] = token
+    payload["expires_at"] = expires_at
+    return payload
 
 
 def get_account(customer_id: str = "", phone: str = "", *, client: httpx.Client | None = None) -> dict[str, Any]:
+    """Read-only account lookup. Never enrolls loyalty (join_loyalty stays false)."""
     e164 = normalize_phone(phone)
     customer = retrieve_customer(customer_id, client=client) if customer_id else None
     if customer is None and e164:
         customer = search_customer_by_phone(e164, client=client)
     if customer is None:
         raise AccountError("Square customer not found.", 404)
-    return _account_payload(customer, created=False, join_loyalty=True, client=client)
+    return _account_payload(customer, created=False, join_loyalty=False, client=client)
 
 
 def get_status(customer_id: str = "", phone: str = "", *, client: httpx.Client | None = None) -> dict[str, Any]:
@@ -551,39 +724,65 @@ def list_orders(customer_id: str = "", phone: str = "", *, client: httpx.Client 
 def _json_error(exc: AccountError):
     from fastapi.responses import JSONResponse
 
-    return JSONResponse({"ok": False, "error": exc.message}, status_code=exc.status_code)
+    headers = {}
+    if exc.status_code == 429:
+        headers["Retry-After"] = str(LOGIN_WINDOW_SECONDS)
+    return JSONResponse(
+        {"ok": False, "error": exc.message},
+        status_code=exc.status_code,
+        headers=headers,
+    )
+
+
+def session_from_request(request) -> dict[str, Any]:
+    token = token_from_headers(
+        request.headers.get("authorization") or "",
+        request.headers.get("x-session-token") or "",
+    )
+    if not token:
+        raise AccountError("Sign in required.", 401)
+    return verify_session_token(token)
 
 
 def mount(app) -> None:
     """Register Square customer routes on a FastAPI app (bakery-drinks)."""
-    from fastapi import Body, Query
+    from fastapi import Body, Request
 
     @app.post("/order/api/account/phone")
     @app.post("/order/api/customer")
-    def order_api_customer_write(body: dict = Body(...)):
+    def order_api_customer_write(request: Request, body: dict = Body(...)):
         try:
+            phone = normalize_phone(str((body or {}).get("phone") or ""))
+            host = request.client.host if request.client else ""
+            check_login_rate(client_ip(dict(request.headers), host), phone)
             return login_or_signup(body)
         except AccountError as exc:
             return _json_error(exc)
 
+    def _read_for_session(request: Request) -> dict[str, Any]:
+        session = session_from_request(request)
+        return get_account(session["customer_id"], session["phone"])
+
     @app.get("/order/api/account")
     @app.get("/order/api/customer")
-    def order_api_customer_read(customer_id: str = Query(""), phone: str = Query("")):
+    def order_api_customer_read(request: Request):
         try:
-            return get_account(customer_id, phone)
+            return _read_for_session(request)
         except AccountError as exc:
             return _json_error(exc)
 
     @app.get("/order/api/account/status")
-    def order_api_account_status(customer_id: str = Query(""), phone: str = Query("")):
+    def order_api_account_status(request: Request):
         try:
-            return get_status(customer_id, phone)
+            session = session_from_request(request)
+            return get_status(session["customer_id"], session["phone"])
         except AccountError as exc:
             return _json_error(exc)
 
     @app.get("/order/api/orders")
-    def order_api_orders(customer_id: str = Query(""), phone: str = Query("")):
+    def order_api_orders(request: Request):
         try:
-            return list_orders(customer_id, phone)
+            session = session_from_request(request)
+            return list_orders(session["customer_id"], session["phone"])
         except AccountError as exc:
             return _json_error(exc)

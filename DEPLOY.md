@@ -53,6 +53,7 @@ Same secret pattern as ingest. **Never put a Square token in client JS, the imag
 | `TWILIO_AUTH_TOKEN` | for ready SMS | Secret Manager. Never git, never `--set-env-vars`. |
 | `TWILIO_FROM_NUMBER` | for ready SMS | E.164 from-number, e.g. `+12055550100`. |
 | `TWILIO_API_BASE` | no | Default `https://api.twilio.com`. Tests only. |
+| `SESSION_SECRET` | no | HMAC key for Sunshine phone-login session tokens. If unset, derived from a hash of `SQUARE_ACCESS_TOKEN`. Optional but recommended so rotating the Square token does not invalidate APK sessions. Never git. |
 
 If all location vars are empty, code falls back to Irondale `L4CK6YWGT5XQX` (same default as laptop ingest). Shop 2 / Trussville is out of scope — do not point these vars at another location.
 
@@ -84,6 +85,8 @@ Do not put Twilio tokens in the image or git.
 
 CreatePaymentLink needs **ORDERS_READ, ORDERS_WRITE, PAYMENTS_WRITE**.
 
+Sunshine phone login also needs **CUSTOMERS_READ**, **CUSTOMERS_WRITE**, **ORDERS_READ**, and **LOYALTY_READ** / **LOYALTY_WRITE** when the client opts into loyalty on POST.
+
 Live menu needs **ITEMS_READ** (Catalog `SearchCatalogItems` / `BatchRetrieve`). If the existing ingest token is payments-read only, `/order/api/menu` returns an empty menu with `catalog_error` until Glenn adds **ITEMS_READ** (or a separate drinks-order secret wired to the same `SQUARE_ACCESS_TOKEN` env name). No new Cloud Run env name is required.
 
 If the ingest token is payments-read only, minting checkout links will 502 until Glenn adds the Orders/Payments write scopes.
@@ -91,6 +94,16 @@ If the ingest token is payments-read only, minting checkout links will 502 until
 Ready status: kitchen tap-to-clear on `/board` also tries `UpdateOrder` fulfillment → `PREPARED` when a token is present. The phone poll then shows **Ready** / “Head to the pickup counter” / **Go to pickup**. If Square rejects the update, the board still hides the ticket locally; the phone stays on Making until fulfillment is prepared in Square POS.
 
 Optional phone (only when Twilio is configured) is still stored on the Square pickup recipient so the drinks service can text on Ready. Line-item `note` is the customer name only — pickup “to go” / “for here” stays on fulfillment `pickup_details.note`, not duplicated onto every drink.
+
+### Sunshine phone login (Android)
+
+POST `/order/api/account/phone` (alias POST `/order/api/customer`) looks up or creates the Square customer and returns `ok`, `created`, `customer` (no email), `loyalty`, `orders`, plus `session_token` and `expires_at` (30 days). Loyalty enroll happens only when the POST body sets `join_loyalty` true. GET is read-only and never enrolls.
+
+The APK must store `session_token` and send it on later GETs (`GET /order/api/account`, `/order/api/customer`, `/order/api/account/status`, `/order/api/orders`) as `Authorization: Bearer <session_token>` or `X-Session-Token`. Phone or `customer_id` query params without a token return 401. Public JSON never includes email.
+
+`SESSION_SECRET` is optional. If unset, the HMAC key is derived from `SQUARE_ACCESS_TOKEN` (rotating that token then signs out every APK session). Prefer a dedicated Secret Manager value for `SESSION_SECRET`. Never git.
+
+Login POSTs are rate-limited in memory: 10 per phone / 15 min and 30 per client IP / 15 min (429 + `Retry-After`). This is per Cloud Run instance and resets on scale-to-zero — it is not a global store.
 
 ## Deploy Cloud Run (`bakery-drinks`)
 
