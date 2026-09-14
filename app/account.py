@@ -32,6 +32,11 @@ except ImportError:  # unit tests of helpers only
     httpx = None  # type: ignore
 
 try:
+    from fastapi import Request
+except ImportError:  # unit tests of helpers only
+    Request = object  # type: ignore
+
+try:
     from app import order as order_svc
 except ImportError:  # standalone / unit tests
     order_svc = None  # type: ignore
@@ -746,7 +751,7 @@ def session_from_request(request) -> dict[str, Any]:
 
 def mount(app) -> None:
     """Register Square customer routes on a FastAPI app (bakery-drinks)."""
-    from fastapi import Body, Request
+    from fastapi import Body
 
     @app.post("/order/api/account/phone")
     @app.post("/order/api/customer")

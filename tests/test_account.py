@@ -3,12 +3,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
-
-if "BAKERY_DB" not in os.environ:
-    _fd, _db = tempfile.mkstemp(suffix=".db")
-    os.close(_fd)
-    os.environ["BAKERY_DB"] = _db
 
 os.environ.setdefault("SESSION_SECRET", "test-account-session-secret")
 
