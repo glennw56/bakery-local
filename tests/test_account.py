@@ -33,6 +33,15 @@ SQUARE_ORDER = {
     "reference_id": "QR-42",
     "created_at": "2026-04-01T15:30:00Z",
     "state": "COMPLETED",
+    "tenders": [
+        {
+            "id": "tender-milk-tea",
+            "type": "CARD",
+            "payment_id": "pay-milk-tea",
+            "amount_money": {"amount": 650, "currency": "USD"},
+        }
+    ],
+    "net_amount_due_money": {"amount": 0, "currency": "USD"},
     "net_amounts": {"total_money": {"amount": 650, "currency": "USD"}},
     "fulfillments": [
         {
@@ -79,6 +88,65 @@ SQUARE_ORDER = {
         }
     ],
 }
+
+PAID_MAKING_ORDER = {
+    "id": "ORDER_PAID_MAKING",
+    "customer_id": "CUST_ADA",
+    "reference_id": "QR-43",
+    "created_at": "2026-04-01T16:00:00Z",
+    "state": "OPEN",
+    "tenders": [
+        {
+            "id": "tender-fruit-tea",
+            "type": "WALLET",
+            "payment_id": "pay-fruit-tea",
+        }
+    ],
+    "net_amount_due_money": {"amount": 0, "currency": "USD"},
+    "net_amounts": {"total_money": {"amount": 550, "currency": "USD"}},
+    "fulfillments": [
+        {
+            "state": "PROPOSED",
+            "pickup_details": {
+                "recipient": {
+                    "phone_number": "+12055550100",
+                    "display_name": "Ada",
+                },
+            },
+        }
+    ],
+    "line_items": [
+        {
+            "name": "Fruit Tea",
+            "quantity": "1",
+            "total_money": {"amount": 550, "currency": "USD"},
+        }
+    ],
+}
+
+UNPAID_OPEN_ORDER = {
+    "id": "ORDER_UNPAID_TICKET",
+    "customer_id": "CUST_ADA",
+    "reference_id": "QR-99",
+    "created_at": "2026-04-01T16:05:00Z",
+    "state": "OPEN",
+    "net_amount_due_money": {"amount": 650, "currency": "USD"},
+    "net_amounts": {"total_money": {"amount": 650, "currency": "USD"}},
+    "fulfillments": [
+        {
+            "state": "PROPOSED",
+            "pickup_details": {
+                "recipient": {
+                    "phone_number": "+12055550100",
+                    "display_name": "Ada",
+                },
+            },
+        }
+    ],
+    "line_items": [{"name": "Milk Tea", "quantity": "1"}],
+}
+
+MIXED_CUSTOMER_ORDERS = [UNPAID_OPEN_ORDER, SQUARE_ORDER, PAID_MAKING_ORDER]
 
 
 def setup_function() -> None:
@@ -594,3 +662,81 @@ def test_get_order_matches_phone_when_customer_id_missing(monkeypatch) -> None:
     summary = account_svc.get_order("ORDER_MILK_TEA", "CUST_ADA", "+12055550100")
     assert summary["id"] == "ORDER_MILK_TEA"
     assert summary["items"][0]["modifiers"][0]["name"] == "Oat Milk"
+
+
+def test_is_paid_order_uses_square_tenders_due_and_completed() -> None:
+    assert account_svc.is_paid_order(SQUARE_ORDER) is True
+    assert account_svc.is_paid_order(PAID_MAKING_ORDER) is True
+    assert account_svc.is_paid_order(UNPAID_OPEN_ORDER) is False
+    assert account_svc.is_paid_order({"state": "OPEN"}) is False
+    assert account_svc.is_paid_order({"state": "DRAFT"}) is False
+    assert account_svc.is_paid_order({"state": "CANCELED", "tenders": [{"id": "t1"}]}) is False
+    assert account_svc.is_paid_order({"state": "COMPLETED"}) is True
+    assert account_svc.is_paid_order(
+        {"state": "OPEN", "net_amount_due_money": {"amount": 0, "currency": "USD"}}
+    ) is True
+    assert account_svc.is_paid_order(
+        {
+            "state": "OPEN",
+            "tenders": [{"id": "t1", "type": "CARD"}],
+            "net_amount_due_money": {"amount": 100, "currency": "USD"},
+        }
+    ) is False
+
+
+def test_summarize_paid_orders_excludes_unpaid() -> None:
+    summaries = account_svc.summarize_paid_orders(MIXED_CUSTOMER_ORDERS)
+    assert [row["id"] for row in summaries] == ["ORDER_MILK_TEA", "ORDER_PAID_MAKING"]
+    unpaid_summary = account_svc.summarize_order(UNPAID_OPEN_ORDER)
+    assert unpaid_summary["id"] == "ORDER_UNPAID_TICKET"
+    assert unpaid_summary["status"] == "making"
+
+
+def test_list_orders_and_account_payload_are_paid_only(monkeypatch) -> None:
+    joins = _stub_square(monkeypatch)
+    monkeypatch.setattr(account_svc, "customer_orders", lambda *a, **k: list(MIXED_CUSTOMER_ORDERS))
+    monkeypatch.setattr(account_svc, "open_queue_orders", lambda *a, **k: [UNPAID_OPEN_ORDER, PAID_MAKING_ORDER])
+    payload = account_svc.list_orders("CUST_ADA", "+12055550100")
+    assert [row["id"] for row in payload["orders"]] == ["ORDER_MILK_TEA", "ORDER_PAID_MAKING"]
+    assert {row["id"] for row in payload["open_orders"]} == {
+        "ORDER_UNPAID_TICKET",
+        "ORDER_PAID_MAKING",
+    }
+    account = account_svc.get_account("CUST_ADA", "+12055550100")
+    assert [row["id"] for row in account["orders"]] == ["ORDER_MILK_TEA", "ORDER_PAID_MAKING"]
+    assert {row["id"] for row in account["open_orders"]} == {
+        "ORDER_UNPAID_TICKET",
+        "ORDER_PAID_MAKING",
+    }
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    token, _ = account_svc.mint_session_token("CUST_ADA", "+12055550100")
+    joins.clear()
+    response = client.get("/order/api/orders", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    data = response.json()
+    assert joins == [False]
+    assert [row["id"] for row in data["orders"]] == ["ORDER_MILK_TEA", "ORDER_PAID_MAKING"]
+    assert "ORDER_UNPAID_TICKET" not in [row["id"] for row in data["orders"]]
+    assert "email" not in data["customer"]
+    login = account_svc.login_or_signup({"phone": "2055550100"})
+    assert [row["id"] for row in login["orders"]] == ["ORDER_MILK_TEA", "ORDER_PAID_MAKING"]
+    assert "email" not in login["customer"]
+
+
+def test_get_order_unpaid_owned_is_404(monkeypatch) -> None:
+    _stub_square(monkeypatch)
+    monkeypatch.setattr(account_svc, "retrieve_order", lambda *a, **k: dict(UNPAID_OPEN_ORDER))
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    token, _ = account_svc.mint_session_token("CUST_ADA", "+12055550100")
+    response = client.get(
+        "/order/api/orders/ORDER_UNPAID_TICKET",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+    body = response.json()
+    assert body["ok"] is False
+    assert "order" not in body
+    assert "email" not in body
+    with pytest.raises(account_svc.AccountError) as missing:
+        account_svc.get_order("ORDER_UNPAID_TICKET", "CUST_ADA", "+12055550100")
+    assert missing.value.status_code == 404

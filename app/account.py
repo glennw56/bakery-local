@@ -267,6 +267,63 @@ def _money_amount(money: Any) -> int:
         return 0
 
 
+def _has_recorded_payment(order: dict[str, Any]) -> bool:
+    """True when Square recorded a tender/payment on the Order.
+
+    Square Retrieve Orders: paid orders populate ``tenders[]`` (Tender objects
+    with ``id``, ``type``, and often ``payment_id``). Some payloads also expose
+    a ``payments`` list; that is checked the same way. Empty lists do not count.
+    """
+    for key in ("tenders", "payments"):
+        rows = order.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if row.get("id") or row.get("payment_id") or str(row.get("type") or "").strip():
+                return True
+    return False
+
+
+def is_paid_order(order: dict[str, Any]) -> bool:
+    """True when this Square Order is paid (Previous Orders / list/detail).
+
+    Square fields used (Orders API Order object; amounts are Square's cents,
+    never invented):
+
+    * ``tenders`` / ``payments`` — present after pay. Bakery QR CreatePaymentLink
+      tickets stay ``OPEN`` with fulfillment PROPOSED/RESERVED while drinks are
+      made; tenders are the paid-making path.
+    * ``net_amount_due_money.amount == 0`` — nothing left to collect. Square may
+      omit this field after pay; omission alone is not treated as paid.
+    * ``state == COMPLETED`` — Square documents completed orders as fully paid
+      (terminal). Combined with no remaining due when due is present.
+
+    ``CANCELED`` and ``DRAFT`` are never paid. Remaining due with no tender is
+    an unpaid open ticket and must not appear in Previous Orders.
+    """
+    if not isinstance(order, dict):
+        return False
+    state = str(order.get("state") or "").upper()
+    if state in ("CANCELED", "DRAFT"):
+        return False
+
+    has_payment = _has_recorded_payment(order)
+    due_blob = order.get("net_amount_due_money")
+    due_present = isinstance(due_blob, dict)
+    due_amount = _money_amount(due_blob) if due_present else None
+    remaining_due = due_present and due_amount is not None and due_amount > 0
+    if remaining_due:
+        # Unpaid checkout ticket, or a partial tender still owing.
+        return False
+    if has_payment:
+        return True
+    if due_present and due_amount == 0:
+        return True
+    return state == "COMPLETED"
+
+
 def _money_cents(blob: Any) -> int:
     if not isinstance(blob, dict):
         return 0
@@ -436,6 +493,21 @@ def summarize_order(order: dict[str, Any], *, ahead: int | None = None) -> dict[
         row["ahead"] = ahead
         row["ahead_count"] = ahead
     return row
+
+
+def summarize_paid_orders(
+    orders: list[dict[str, Any]],
+    *,
+    queue: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Public Previous Orders list: paid Square tickets only."""
+    others = queue if queue is not None else []
+    out: list[dict[str, Any]] = []
+    for row in orders:
+        if not isinstance(row, dict) or not is_paid_order(row):
+            continue
+        out.append(summarize_order(row, ahead=ahead_count(row, others)))
+    return out
 
 
 def square_token() -> str:
@@ -754,6 +826,8 @@ def get_order(
         raise AccountError("Order not found.", 404)
     if not order_belongs_to_session(order, customer_id, phone):
         raise AccountError("This order is not on this account.", 403)
+    if not is_paid_order(order):
+        raise AccountError("Order not found.", 404)
     return summarize_order(order)
 
 
@@ -823,13 +897,15 @@ def _account_payload(
     raw_orders = customer_orders(public["id"], phone, client=client)
     queue = open_queue_orders(client=client)
     summaries = [summarize_order(row, ahead=ahead_count(row, queue)) for row in raw_orders]
+    # Previous Orders is paid-only. open_orders stays the in-progress set
+    # (pending/making), including unpaid checkout tickets used for live status.
     open_orders = [row for row in summaries if row.get("status") in ("pending", "making")]
     return {
         "ok": True,
         "created": created,
         "customer": public,
         "loyalty": loyalty,
-        "orders": summaries,
+        "orders": summarize_paid_orders(raw_orders, queue=queue),
         "open_orders": open_orders,
     }
 
