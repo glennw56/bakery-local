@@ -258,16 +258,65 @@ def customer_public(customer: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _money_cents(blob: Any) -> int:
-    if not isinstance(blob, dict):
-        return 0
-    money = blob.get("total_money") if "total_money" in blob else blob
+def _money_amount(money: Any) -> int:
     if not isinstance(money, dict):
         return 0
     try:
         return int(money.get("amount") or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _money_cents(blob: Any) -> int:
+    if not isinstance(blob, dict):
+        return 0
+    money = blob.get("total_money") if "total_money" in blob else blob
+    return _money_amount(money)
+
+
+def _price_fields(blob: dict[str, Any]) -> dict[str, int]:
+    """Public cents from Square money. Prefer total_price_money / total_money, then base."""
+    out: dict[str, int] = {}
+    total = None
+    for key in ("total_price_money", "total_money"):
+        if isinstance(blob.get(key), dict):
+            total = _money_amount(blob[key])
+            break
+    base = None
+    if isinstance(blob.get("base_price_money"), dict):
+        base = _money_amount(blob["base_price_money"])
+    if total is not None:
+        out["price_cents"] = total
+    elif base is not None:
+        out["price_cents"] = base
+    if base is not None:
+        out["base_price_cents"] = base
+    return out
+
+
+def _parse_qty(raw: Any, default: int | None = None) -> int | str | None:
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        text = str(raw).strip()
+        return text or default
+
+
+def _public_modifier(mod: dict[str, Any]) -> dict[str, Any] | None:
+    name = str(mod.get("name") or mod.get("display_name") or "").strip()
+    if not name:
+        return None
+    row: dict[str, Any] = {"name": name}
+    quantity = _parse_qty(mod.get("quantity"))
+    if quantity is not None:
+        row["quantity"] = quantity
+    row.update(_price_fields(mod))
+    catalog_id = str(mod.get("catalog_object_id") or "").strip()
+    if catalog_id:
+        row["catalog_object_id"] = catalog_id
+    return row
 
 
 def _line_items(order: dict[str, Any]) -> list[dict[str, Any]]:
@@ -278,11 +327,33 @@ def _line_items(order: dict[str, Any]) -> list[dict[str, Any]]:
         name = str(item.get("name") or "").strip()
         if not name:
             continue
-        try:
-            qty = int(float(item.get("quantity") or 1))
-        except (TypeError, ValueError):
+        qty = _parse_qty(item.get("quantity"), 1)
+        if not isinstance(qty, int):
             qty = 1
-        items.append({"name": name, "qty": max(1, qty)})
+        row: dict[str, Any] = {"name": name, "qty": max(1, qty)}
+        catalog_id = str(item.get("catalog_object_id") or "").strip()
+        variation_id = str(
+            item.get("catalog_variation_id")
+            or item.get("item_variation_id")
+            or catalog_id
+        ).strip()
+        variation_name = str(item.get("variation_name") or "").strip()
+        if catalog_id:
+            row["catalog_object_id"] = catalog_id
+        if variation_id:
+            row["catalog_variation_id"] = variation_id
+        if variation_name:
+            row["variation_name"] = variation_name
+        row.update(_price_fields(item))
+        modifiers: list[dict[str, Any]] = []
+        for mod in item.get("modifiers") or []:
+            if not isinstance(mod, dict):
+                continue
+            public = _public_modifier(mod)
+            if public:
+                modifiers.append(public)
+        row["modifiers"] = modifiers
+        items.append(row)
     return items
 
 
@@ -644,6 +715,48 @@ def _order_phone(order: dict[str, Any]) -> str:
     return ""
 
 
+def retrieve_order(order_id: str, *, client: httpx.Client | None = None) -> dict[str, Any] | None:
+    oid = (order_id or "").strip()
+    if not oid:
+        return None
+    try:
+        body = _square_json("GET", f"/v2/orders/{oid}", client=client)
+    except AccountError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+    order = body.get("order")
+    return order if isinstance(order, dict) else None
+
+
+def order_belongs_to_session(order: dict[str, Any], customer_id: str, phone: str) -> bool:
+    cid = (customer_id or "").strip()
+    if cid and str(order.get("customer_id") or "").strip() == cid:
+        return True
+    want = _phone_digits(phone)
+    got = _phone_digits(_order_phone(order))
+    return bool(want and got and want == got)
+
+
+def get_order(
+    order_id: str,
+    customer_id: str,
+    phone: str,
+    *,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    """Retrieve one Square order if it belongs to the session customer. Read-only."""
+    oid = (order_id or "").strip()
+    if not oid:
+        raise AccountError("Order not found.", 404)
+    order = retrieve_order(oid, client=client)
+    if order is None:
+        raise AccountError("Order not found.", 404)
+    if not order_belongs_to_session(order, customer_id, phone):
+        raise AccountError("This order is not on this account.", 403)
+    return summarize_order(order)
+
+
 def customer_orders(customer_id: str, phone: str, *, client: httpx.Client | None = None) -> list[dict[str, Any]]:
     found: dict[str, dict[str, Any]] = {}
     if customer_id:
@@ -866,6 +979,17 @@ def mount(app) -> None:
         try:
             session = session_from_request(request)
             return list_orders(session["customer_id"], session["phone"])
+        except AccountError as exc:
+            return _json_error(exc)
+
+    @app.get("/order/api/orders/{order_id}")
+    def order_api_order_detail(request: Request, order_id: str):
+        try:
+            session = session_from_request(request)
+            return {
+                "ok": True,
+                "order": get_order(order_id, session["customer_id"], session["phone"]),
+            }
         except AccountError as exc:
             return _json_error(exc)
 

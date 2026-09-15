@@ -27,6 +27,59 @@ CUSTOMER = {
 
 LOYALTY = {"enrolled": False, "account_id": "", "points": 0, "program_id": "PROG"}
 
+SQUARE_ORDER = {
+    "id": "ORDER_MILK_TEA",
+    "customer_id": "CUST_ADA",
+    "reference_id": "QR-42",
+    "created_at": "2026-04-01T15:30:00Z",
+    "state": "COMPLETED",
+    "net_amounts": {"total_money": {"amount": 650, "currency": "USD"}},
+    "fulfillments": [
+        {
+            "state": "COMPLETED",
+            "pickup_details": {
+                "recipient": {
+                    "phone_number": "+12055550100",
+                    "display_name": "Ada",
+                },
+            },
+        }
+    ],
+    "line_items": [
+        {
+            "name": "Milk Tea",
+            "quantity": "1",
+            "catalog_object_id": "VAR_MILK_TEA",
+            "variation_name": "Regular",
+            "base_price_money": {"amount": 550, "currency": "USD"},
+            "total_money": {"amount": 650, "currency": "USD"},
+            "modifiers": [
+                {
+                    "uid": "mod-oat",
+                    "name": "Oat Milk",
+                    "quantity": "1",
+                    "catalog_object_id": "MOD_OAT",
+                    "base_price_money": {"amount": 75, "currency": "USD"},
+                    "total_price_money": {"amount": 75, "currency": "USD"},
+                },
+                {
+                    "name": "Tapioca Boba",
+                    "quantity": "2",
+                    "catalog_object_id": "MOD_BOBA",
+                    "base_price_money": {"amount": 25, "currency": "USD"},
+                },
+                {
+                    "display_name": "Regular Sweet",
+                    "quantity": "1",
+                    "total_money": {"amount": 0, "currency": "USD"},
+                    "base_price_money": {"amount": 0, "currency": "USD"},
+                },
+                {"catalog_object_id": "MOD_SKIP_NO_NAME"},
+            ],
+        }
+    ],
+}
+
 
 def setup_function() -> None:
     account_svc.reset_login_rate_limits()
@@ -163,6 +216,7 @@ def test_get_without_token_is_401() -> None:
         "/order/api/customer?customer_id=CUST_ADA",
         "/order/api/account/status?phone=2055550100",
         "/order/api/orders?customer_id=CUST_ADA",
+        "/order/api/orders/ORDER_MILK_TEA?customer_id=CUST_ADA",
     ):
         response = client.get(path)
         assert response.status_code == 401, path
@@ -387,3 +441,156 @@ def test_post_customer_profile_alias(monkeypatch) -> None:
     assert updates == [
         {"customer_id": "CUST_ADA", "fields": {"family_name": "Lovelace"}, "version": 4}
     ]
+
+
+def test_summarize_order_includes_modifiers_and_variation() -> None:
+    summary = account_svc.summarize_order(SQUARE_ORDER)
+    assert summary["id"] == "ORDER_MILK_TEA"
+    assert summary["order_number"] == "42"
+    assert summary["total_cents"] == 650
+    assert summary["status"] == "ready"
+    assert len(summary["items"]) == 1
+    item = summary["items"][0]
+    assert item["name"] == "Milk Tea"
+    assert item["qty"] == 1
+    assert item["catalog_object_id"] == "VAR_MILK_TEA"
+    assert item["catalog_variation_id"] == "VAR_MILK_TEA"
+    assert item["variation_name"] == "Regular"
+    assert item["price_cents"] == 650
+    assert item["base_price_cents"] == 550
+    mods = item["modifiers"]
+    assert [m["name"] for m in mods] == ["Oat Milk", "Tapioca Boba", "Regular Sweet"]
+    oat = mods[0]
+    assert oat["quantity"] == 1
+    assert oat["catalog_object_id"] == "MOD_OAT"
+    assert oat["price_cents"] == 75
+    assert oat["base_price_cents"] == 75
+    boba = mods[1]
+    assert boba["quantity"] == 2
+    assert boba["catalog_object_id"] == "MOD_BOBA"
+    assert boba["price_cents"] == 25
+    assert boba["base_price_cents"] == 25
+    sweet = mods[2]
+    assert sweet["quantity"] == 1
+    assert sweet["price_cents"] == 0
+    assert "catalog_object_id" not in sweet
+    dumped = str(summary)
+    assert "email" not in dumped
+    assert "ada@example.com" not in dumped
+
+
+def test_line_items_without_modifiers_stay_minimal() -> None:
+    items = account_svc._line_items(
+        {"line_items": [{"name": "Croissant", "quantity": "2"}]}
+    )
+    assert items == [{"name": "Croissant", "qty": 2, "modifiers": []}]
+
+
+def test_order_belongs_to_session_by_customer_or_phone() -> None:
+    assert account_svc.order_belongs_to_session(SQUARE_ORDER, "CUST_ADA", "+19999999999")
+    phone_only = dict(SQUARE_ORDER, customer_id="")
+    assert account_svc.order_belongs_to_session(phone_only, "OTHER", "+12055550100")
+    assert not account_svc.order_belongs_to_session(SQUARE_ORDER, "OTHER", "+19999999999")
+
+
+def test_list_orders_public_json_includes_modifiers(monkeypatch) -> None:
+    joins = _stub_square(monkeypatch)
+    monkeypatch.setattr(account_svc, "customer_orders", lambda *a, **k: [SQUARE_ORDER])
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    token, _ = account_svc.mint_session_token("CUST_ADA", "+12055550100")
+    joins.clear()
+    response = client.get("/order/api/orders", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    data = response.json()
+    assert joins == [False]
+    assert "email" not in data["customer"]
+    item = data["orders"][0]["items"][0]
+    assert item["name"] == "Milk Tea"
+    assert item["modifiers"][0]["name"] == "Oat Milk"
+    assert item["modifiers"][0]["catalog_object_id"] == "MOD_OAT"
+    assert item["modifiers"][0]["price_cents"] == 75
+    assert item["catalog_variation_id"] == "VAR_MILK_TEA"
+
+
+def test_get_order_by_id_is_session_scoped(monkeypatch) -> None:
+    joins = _stub_square(monkeypatch)
+    monkeypatch.setattr(account_svc, "retrieve_order", lambda *a, **k: dict(SQUARE_ORDER))
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    token, _ = account_svc.mint_session_token("CUST_ADA", "+12055550100")
+    joins.clear()
+    response = client.get(
+        "/order/api/orders/ORDER_MILK_TEA",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert joins == []
+    order = data["order"]
+    assert order["id"] == "ORDER_MILK_TEA"
+    item = order["items"][0]
+    assert item["modifiers"][0]["name"] == "Oat Milk"
+    assert item["modifiers"][1]["quantity"] == 2
+    assert item["catalog_object_id"] == "VAR_MILK_TEA"
+    assert "email" not in str(data)
+
+
+def test_get_order_by_id_wrong_customer_is_403(monkeypatch) -> None:
+    _stub_square(monkeypatch)
+    foreign = dict(SQUARE_ORDER, customer_id="CUST_OTHER")
+    foreign["fulfillments"] = [
+        {"state": "COMPLETED", "pickup_details": {"recipient": {"phone_number": "+19998887777"}}}
+    ]
+    monkeypatch.setattr(account_svc, "retrieve_order", lambda *a, **k: foreign)
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    token, _ = account_svc.mint_session_token("CUST_ADA", "+12055550100")
+    response = client.get(
+        "/order/api/orders/ORDER_MILK_TEA?customer_id=CUST_OTHER",
+        headers={"X-Session-Token": token},
+    )
+    assert response.status_code == 403
+    body = response.json()
+    assert body["ok"] is False
+    assert "email" not in body
+    assert "order" not in body
+    assert "customer" not in body
+
+
+def test_get_order_by_id_not_found_is_404(monkeypatch) -> None:
+    _stub_square(monkeypatch)
+    monkeypatch.setattr(account_svc, "retrieve_order", lambda *a, **k: None)
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    token, _ = account_svc.mint_session_token("CUST_ADA", "+12055550100")
+    response = client.get(
+        "/order/api/orders/MISSING",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+    assert response.json()["ok"] is False
+
+
+def test_get_order_by_id_without_token_is_401() -> None:
+    response = client.get("/order/api/orders/ORDER_MILK_TEA")
+    assert response.status_code == 401
+    assert response.json()["ok"] is False
+
+
+def test_retrieve_order_calls_square_get(monkeypatch) -> None:
+    calls: list = []
+
+    def fake_square(method, path, payload=None, **kw):
+        calls.append((method, path, payload))
+        return {"order": dict(SQUARE_ORDER)}
+
+    monkeypatch.setattr(account_svc, "_square_json", fake_square)
+    order = account_svc.retrieve_order("ORDER_MILK_TEA")
+    assert order["id"] == "ORDER_MILK_TEA"
+    assert calls == [("GET", "/v2/orders/ORDER_MILK_TEA", None)]
+
+
+def test_get_order_matches_phone_when_customer_id_missing(monkeypatch) -> None:
+    phone_only = dict(SQUARE_ORDER, customer_id="")
+    monkeypatch.setattr(account_svc, "retrieve_order", lambda *a, **k: phone_only)
+    summary = account_svc.get_order("ORDER_MILK_TEA", "CUST_ADA", "+12055550100")
+    assert summary["id"] == "ORDER_MILK_TEA"
+    assert summary["items"][0]["modifiers"][0]["name"] == "Oat Milk"
