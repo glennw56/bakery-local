@@ -1149,8 +1149,10 @@ def _ensure_avatar_definition(*, client: httpx.Client | None = None) -> None:
                     "key": AVATAR_ATTR_KEY,
                     "name": "Sunshine Explore look",
                     "description": "COS avatar recipe JSON (player_id, username, display, recipe).",
-                    "type": "STRING",
-                    "visibility": "VISIBILITY_HIDDEN",
+                    "visibility": "VISIBILITY_READ_WRITE_VALUES",
+                    "schema": {
+                        "$ref": "https://developer-production-s.squarecdn.com/schemas/v1/common.json#squareup.common.String"
+                    },
                 }
             },
             client=client,
@@ -1187,10 +1189,11 @@ def _write_square_avatar(
     client: httpx.Client | None = None,
 ) -> None:
     _ensure_avatar_definition(client=client)
+    # Square UpsertCustomerCustomAttribute is POST (not PUT).
     _square_json(
-        "PUT",
+        "POST",
         f"/v2/customers/{customer_id}/custom-attributes/{AVATAR_ATTR_KEY}",
-        {"custom_attribute": {"key": AVATAR_ATTR_KEY, "value": json.dumps(row, separators=(",", ":"))}},
+        {"custom_attribute": {"value": json.dumps(row, separators=(",", ":"))}},
         client=client,
     )
 
