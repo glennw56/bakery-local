@@ -12,3 +12,5 @@ data/*
 *.db-shm
 
 *.db
+app/avatar_store.json
+app/avatar_store.json.tmp

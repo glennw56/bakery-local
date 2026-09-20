@@ -103,6 +103,10 @@ POST `/order/api/account/profile` (alias POST `/order/api/customer/profile`) is 
 
 The APK must store `session_token` and send it on later GETs (`GET /order/api/account`, `/order/api/customer`, `/order/api/account/status`, `/order/api/orders`) and on profile POST as `Authorization: Bearer <session_token>` or `X-Session-Token`. Phone or `customer_id` query params without a token return 401. Public JSON never includes email.
 
+GET/PUT `/order/api/account/avatar` (POST/PATCH aliases) is the forever COS look. Bearer session required. Body: `player_id`, `username`, `display_name`, `avatar` / `avatar_recipe` (approved IDs only). Response: `{ ok, player_id, customized, source, public }` — `public` never includes Square customer id, email, or phone.
+
+Forever store is a **Square customer custom attribute** `sunshine_avatar` (STRING JSON) on the existing Customers API. No new GCP product, no Cloud SQL, no extra Cloud Run service. A local JSON file is a laptop/test fallback only — Cloud Run disk is ephemeral, so Square is the production source of truth. First PUT creates the hidden custom-attribute definition if it is missing. Needs **CUSTOMERS_WRITE**. InventoryCounts are **not** added (optional; drinks menu stays as today).
+
 `SESSION_SECRET` is optional. If unset, the HMAC key is derived from `SQUARE_ACCESS_TOKEN` (rotating that token then signs out every APK session). Prefer a dedicated Secret Manager value for `SESSION_SECRET`. Never git.
 
 Login POSTs are rate-limited in memory: 10 per phone / 15 min and 30 per client IP / 15 min (429 + `Retry-After`). This is per Cloud Run instance and resets on scale-to-zero — it is not a global store.
@@ -121,7 +125,7 @@ gcloud run deploy bakery-drinks \
   --set-env-vars BAKERY_SERVICE=drinks,ORDER_PUBLIC_URL=https://bakery-drinks-xxxxx-ue.a.run.app,SQUARE_LOCATION_ID_IRONDALE=L4CK6YWGT5XQX
 ```
 
-Keep `SQUARE_ACCESS_TOKEN` and `INGEST_KEY` as Secret Manager mounts (do not `--set-env-vars` the token). Redeploy is enough; no new service.
+Keep `SQUARE_ACCESS_TOKEN` and `INGEST_KEY` as Secret Manager mounts (do not `--set-env-vars` the token). Redeploy is enough; no new service. Avatar routes ship in the same image (min-instances 0). Monthly add: **$0** beyond current bakery-drinks (scale-to-zero). Do **not** add an always-on game VM — that is the item that would threaten the ~$15/mo GCP cap.
 
 Confirm:
 

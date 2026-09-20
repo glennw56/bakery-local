@@ -992,6 +992,275 @@ def update_profile(
     return payload
 
 
+AVATAR_VERSION = 1
+AVATAR_ATTR_KEY = "sunshine_avatar"
+APPROVED_AVATAR = {
+    "skin": ("fair", "peach", "tan", "deep", "rich"),
+    "hair": ("bangs", "wavy", "short", "bun", "none"),
+    "hair_color": ("brown", "wine", "black", "honey", "cream"),
+    "outfit": ("blush", "wine", "cream", "apricot"),
+    "apron": ("none", "grey", "blush", "wine"),
+    "hat": ("none", "sun", "beanie", "bow"),
+    "accessory": ("none", "glasses", "flower", "scarf"),
+}
+RESERVED_USERNAMES = {
+    "sunshine",
+    "admin",
+    "staff",
+    "bakery",
+    "ronald",
+    "system",
+    "moderator",
+    "support",
+}
+
+
+def default_avatar() -> dict[str, Any]:
+    return {
+        "v": AVATAR_VERSION,
+        "skin": "peach",
+        "hair": "bangs",
+        "hair_color": "brown",
+        "outfit": "blush",
+        "apron": "grey",
+        "hat": "sun",
+        "accessory": "glasses",
+    }
+
+
+def sanitize_avatar(raw: Any) -> dict[str, Any]:
+    recipe = default_avatar()
+    if not isinstance(raw, dict):
+        return recipe
+    for key, allowed in APPROVED_AVATAR.items():
+        value = str(raw.get(key) or recipe[key]).strip().lower()
+        recipe[key] = value if value in allowed else recipe[key]
+    recipe["v"] = AVATAR_VERSION
+    return recipe
+
+
+def normalize_username(raw: str) -> str:
+    return "".join(ch for ch in (raw or "").strip().lower() if ch.isalnum() or ch == "_")
+
+
+def username_error(raw: str) -> str:
+    name = normalize_username(raw)
+    if len(name) < 3 or len(name) > 20:
+        return "Username must be 3–20 letters, numbers, or _."
+    if name in RESERVED_USERNAMES or any(name.startswith(r) for r in RESERVED_USERNAMES):
+        return "That username is reserved."
+    return ""
+
+
+def display_name_error(raw: str) -> str:
+    name = (raw or "").strip()
+    if not name or len(name) > 24:
+        return "Display name must be 1–24 characters."
+    if "@" in name:
+        return "Do not use an email as a display name."
+    if name.lower() in RESERVED_USERNAMES:
+        return "That display name is reserved."
+    return ""
+
+
+def public_game_profile(player_id: str, username: str, display: str, avatar: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "player_id": player_id,
+        "username": normalize_username(username),
+        "display_name": (display or "Sunshine Guest").strip()[:24],
+        "avatar": sanitize_avatar(avatar),
+        "displays": [],
+    }
+
+
+def avatar_store_path() -> str:
+    return os.environ.get(
+        "SUNSHINE_AVATAR_STORE",
+        os.path.join(os.path.dirname(__file__), "avatar_store.json"),
+    )
+
+
+def load_avatar_store() -> dict[str, Any]:
+    path = avatar_store_path()
+    if not os.path.isfile(path):
+        return {"accounts": {}}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {"accounts": {}}
+    return data if isinstance(data, dict) else {"accounts": {}}
+
+
+def save_avatar_store(store: dict[str, Any]) -> None:
+    path = avatar_store_path()
+    tmp = path + ".tmp"
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(store, fh, indent=2)
+    os.replace(tmp, path)
+
+
+def _avatar_row_from_blob(blob: Any) -> dict[str, Any]:
+    if not isinstance(blob, dict):
+        return {}
+    return {
+        "player_id": str(blob.get("player_id") or "").strip(),
+        "username": normalize_username(str(blob.get("username") or "")),
+        "display_name": str(blob.get("display_name") or "Sunshine Guest").strip()[:24],
+        "avatar": sanitize_avatar(blob.get("avatar") if isinstance(blob.get("avatar"), dict) else {}),
+        "customized": bool(blob.get("customized", True)),
+        "updated_unix": int(blob.get("updated_unix") or time.time()),
+    }
+
+
+def _empty_avatar_payload() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "player_id": "",
+        "customized": False,
+        "source": "none",
+        "public": public_game_profile("", "", "Sunshine Guest", default_avatar()),
+    }
+
+
+def _avatar_payload(row: dict[str, Any], source: str) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "player_id": row.get("player_id", ""),
+        "customized": bool(row.get("customized", False)),
+        "source": source,
+        "public": public_game_profile(
+            str(row.get("player_id") or ""),
+            str(row.get("username") or ""),
+            str(row.get("display_name") or "Sunshine Guest"),
+            row.get("avatar") if isinstance(row.get("avatar"), dict) else {},
+        ),
+    }
+
+
+def _ensure_avatar_definition(*, client: httpx.Client | None = None) -> None:
+    try:
+        _square_json(
+            "POST",
+            "/v2/customers/custom-attribute-definitions",
+            {
+                "custom_attribute_definition": {
+                    "key": AVATAR_ATTR_KEY,
+                    "name": "Sunshine Explore look",
+                    "description": "COS avatar recipe JSON (player_id, username, display, recipe).",
+                    "type": "STRING",
+                    "visibility": "VISIBILITY_HIDDEN",
+                }
+            },
+            client=client,
+        )
+    except AccountError as exc:
+        if exc.status_code in (409, 400):
+            return
+        raise
+
+
+def _read_square_avatar(customer_id: str, *, client: httpx.Client | None = None) -> dict[str, Any]:
+    body = _square_json(
+        "GET",
+        f"/v2/customers/{customer_id}/custom-attributes/{AVATAR_ATTR_KEY}",
+        client=client,
+    )
+    attr = body.get("custom_attribute") if isinstance(body.get("custom_attribute"), dict) else {}
+    raw = attr.get("value")
+    if isinstance(raw, dict):
+        return _avatar_row_from_blob(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return _avatar_row_from_blob(parsed)
+    return {}
+
+
+def _write_square_avatar(
+    customer_id: str,
+    row: dict[str, Any],
+    *,
+    client: httpx.Client | None = None,
+) -> None:
+    _ensure_avatar_definition(client=client)
+    _square_json(
+        "PUT",
+        f"/v2/customers/{customer_id}/custom-attributes/{AVATAR_ATTR_KEY}",
+        {"custom_attribute": {"key": AVATAR_ATTR_KEY, "value": json.dumps(row, separators=(",", ":"))}},
+        client=client,
+    )
+
+
+def upsert_account_avatar(
+    customer_id: str,
+    body: dict[str, Any],
+    *,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    cid = (customer_id or "").strip()
+    if not cid:
+        raise AccountError("Sign in again.", 401)
+    user_err = username_error(str(body.get("username") or ""))
+    if user_err:
+        raise AccountError(user_err)
+    name_err = display_name_error(str(body.get("display_name") or "Sunshine Guest"))
+    if name_err:
+        raise AccountError(name_err)
+    player_id = str(body.get("player_id") or "").strip() or f"plr_{uuid.uuid4().hex[:16]}"
+    recipe = sanitize_avatar(body.get("avatar_recipe") or body.get("avatar"))
+    username = normalize_username(str(body.get("username") or ""))
+    row = {
+        "player_id": player_id,
+        "username": username,
+        "display_name": str(body.get("display_name") or "Sunshine Guest").strip()[:24],
+        "avatar": recipe,
+        "customized": True,
+        "updated_unix": int(time.time()),
+    }
+    store = load_avatar_store()
+    accounts = store.get("accounts") if isinstance(store.get("accounts"), dict) else {}
+    for other_id, other in accounts.items():
+        if other_id == cid or not isinstance(other, dict):
+            continue
+        if normalize_username(str(other.get("username") or "")) == username:
+            raise AccountError("That username is already used.")
+    accounts[cid] = row
+    store["accounts"] = accounts
+    save_avatar_store(store)
+    source = "file"
+    if square_token():
+        try:
+            _write_square_avatar(cid, row, client=client)
+            source = "square"
+        except AccountError:
+            # File write already succeeded. Cloud Run disk is ephemeral; Square
+            # is the forever store when CUSTOMERS_WRITE + custom attributes work.
+            source = "file"
+    return _avatar_payload(row, source)
+
+
+def get_account_avatar(customer_id: str, *, client: httpx.Client | None = None) -> dict[str, Any]:
+    cid = (customer_id or "").strip()
+    if square_token():
+        try:
+            row = _read_square_avatar(cid, client=client)
+            if row:
+                return _avatar_payload(row, "square")
+        except AccountError as exc:
+            if exc.status_code not in (404, 400):
+                raise
+    store = load_avatar_store()
+    accounts = store.get("accounts") if isinstance(store.get("accounts"), dict) else {}
+    row = accounts.get(cid) if isinstance(accounts.get(cid), dict) else {}
+    if not row:
+        return _empty_avatar_payload()
+    return _avatar_payload(_avatar_row_from_blob(row), "file")
+
+
 def _json_error(exc: AccountError):
     from fastapi.responses import JSONResponse
 
@@ -1075,5 +1344,23 @@ def mount(app) -> None:
         try:
             session = session_from_request(request)
             return update_profile(session["customer_id"], session["phone"], body)
+        except AccountError as exc:
+            return _json_error(exc)
+
+    @app.get("/order/api/account/avatar")
+    def order_api_account_avatar_get(request: Request):
+        try:
+            session = session_from_request(request)
+            return get_account_avatar(session["customer_id"])
+        except AccountError as exc:
+            return _json_error(exc)
+
+    @app.put("/order/api/account/avatar")
+    @app.post("/order/api/account/avatar")
+    @app.patch("/order/api/account/avatar")
+    def order_api_account_avatar_put(request: Request, body: dict = Body(...)):
+        try:
+            session = session_from_request(request)
+            return upsert_account_avatar(session["customer_id"], body or {})
         except AccountError as exc:
             return _json_error(exc)

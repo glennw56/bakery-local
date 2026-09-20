@@ -740,3 +740,69 @@ def test_get_order_unpaid_owned_is_404(monkeypatch) -> None:
     with pytest.raises(account_svc.AccountError) as missing:
         account_svc.get_order("ORDER_UNPAID_TICKET", "CUST_ADA", "+12055550100")
     assert missing.value.status_code == 404
+
+
+def test_avatar_file_store_roundtrip(monkeypatch, tmp_path) -> None:
+    store = tmp_path / "avatars.json"
+    monkeypatch.setenv("SUNSHINE_AVATAR_STORE", str(store))
+    monkeypatch.delenv("SQUARE_ACCESS_TOKEN", raising=False)
+    recipe = account_svc.sanitize_avatar({"skin": "NOPE", "hat": "sun"})
+    assert recipe["skin"] == "peach"
+    assert recipe["hat"] == "sun"
+    saved = account_svc.upsert_account_avatar(
+        "CUST_ADA",
+        {
+            "player_id": "plr_ada",
+            "username": "ada_walk",
+            "display_name": "Ada",
+            "avatar_recipe": recipe,
+        },
+    )
+    assert saved["ok"] is True
+    assert saved["customized"] is True
+    assert saved["source"] == "file"
+    assert saved["public"]["username"] == "ada_walk"
+    assert saved["public"]["avatar"]["hat"] == "sun"
+    got = account_svc.get_account_avatar("CUST_ADA")
+    assert got["public"]["player_id"] == "plr_ada"
+    empty = account_svc.get_account_avatar("CUST_MISSING")
+    assert empty["customized"] is False
+    with pytest.raises(account_svc.AccountError):
+        account_svc.upsert_account_avatar(
+            "CUST_OTHER",
+            {
+                "username": "ada_walk",
+                "display_name": "Other",
+                "avatar_recipe": account_svc.default_avatar(),
+            },
+        )
+
+
+def test_avatar_http_requires_session_and_saves(monkeypatch, tmp_path) -> None:
+    _stub_square(monkeypatch)
+    monkeypatch.setenv("SESSION_SECRET", "test-account-session-secret")
+    monkeypatch.setenv("SUNSHINE_AVATAR_STORE", str(tmp_path / "avatars.json"))
+    monkeypatch.delenv("SQUARE_ACCESS_TOKEN", raising=False)
+    denied = client.get("/order/api/account/avatar")
+    assert denied.status_code == 401
+    token, _ = account_svc.mint_session_token("CUST_ADA", "+12055550100")
+    headers = {"Authorization": f"Bearer {token}"}
+    empty = client.get("/order/api/account/avatar", headers=headers)
+    assert empty.status_code == 200
+    assert empty.json()["customized"] is False
+    put = client.put(
+        "/order/api/account/avatar",
+        headers=headers,
+        json={
+            "player_id": "plr_http",
+            "username": "ada_http",
+            "display_name": "Ada",
+            "avatar": {"hat": "beanie", "outfit": "wine"},
+        },
+    )
+    assert put.status_code == 200
+    body = put.json()
+    assert body["ok"] is True
+    assert body["public"]["avatar"]["hat"] == "beanie"
+    got = client.get("/order/api/account/avatar", headers=headers)
+    assert got.json()["public"]["username"] == "ada_http"
