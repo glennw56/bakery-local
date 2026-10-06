@@ -31,6 +31,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app import catalog as catalog_svc
+from app import hours as hours_svc
 from app.drinks import is_drink
 
 CHICAGO = ZoneInfo("America/Chicago")
@@ -312,6 +313,20 @@ class OrderError(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+
+
+class ClosedError(OrderError):
+    """Shop is outside Square business hours. No payment link was created."""
+
+    def __init__(self, message: str, next_open: str | None):
+        text = (message or "").strip() or "We're closed right now."
+        super().__init__(text, 409)
+        self.payload = {
+            "ok": False,
+            "error": "closed",
+            "message": text,
+            "next_open": next_open,
+        }
 
 
 def square_token() -> str:
@@ -1013,9 +1028,41 @@ def demo_checkout(cart: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def hours_payload(*, client: httpx.Client | None = None) -> dict[str, Any]:
+    """Public open/closed view. Unknown hours fail open (open_now true, hours null)."""
+    token = square_token()
+    if not token:
+        return {"open_now": True, "next_open": None, "hours": None}
+    return hours_svc.current_status(
+        token=token,
+        location_id=irondale_location_id(),
+        api_base=square_api_base(),
+        client=client,
+    ).as_public()
+
+
+def _reject_if_closed(*, client: httpx.Client | None) -> None:
+    """Block checkout when the location schedule says closed.
+
+    A missing schedule (Square error and no cached hours) does not raise:
+    failing open keeps orders moving when the Locations API is down.
+    """
+    state = hours_svc.current_status(
+        token=square_token(),
+        location_id=irondale_location_id(),
+        api_base=square_api_base(),
+        client=client,
+    )
+    if state.hours is None or state.open_now:
+        return
+    raise ClosedError(state.message, state.next_open)
+
+
 def checkout(body: dict[str, Any], *, origin: str, client: httpx.Client | None = None) -> dict[str, Any]:
-    cart = validate_cart(body, client=client)
     mode = pay_mode()
+    if mode == "square":
+        _reject_if_closed(client=client)
+    cart = validate_cart(body, client=client)
     if mode == "off":
         raise OrderError("Ordering is not configured yet.", 503)
     if mode == "demo":

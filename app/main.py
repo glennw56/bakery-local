@@ -296,10 +296,17 @@ def order_api_menu():
     return order_svc.menu_payload()
 
 
+@app.get("/order/api/hours")
+def order_api_hours():
+    return order_svc.hours_payload()
+
+
 @app.post("/order/api/checkout")
 def order_api_checkout(request: Request, body: dict = Body(...)):
     try:
         return order_svc.checkout(body, origin=_order_origin(request))
+    except order_svc.ClosedError as exc:
+        return JSONResponse(exc.payload, status_code=exc.status_code)
     except order_svc.OrderError as exc:
         return JSONResponse({"error": exc.message}, status_code=exc.status_code)
 

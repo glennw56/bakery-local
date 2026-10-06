@@ -39,7 +39,8 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 | `POST /board/demo-tick` | Dev-only: insert a random demo drink (no Square) |
 | `GET /order` `GET /qr` | Irondale QR drink self-order (phone). `/qr` redirects to `/order` |
 | `GET /order/tent` | Printable table tent + QR for the live `/order` URL |
-| `POST /order/api/checkout` | Server mints a Square hosted payment link (token never in the browser) |
+| `GET /order/api/hours` | Irondale open/closed from Square location business hours (`open_now`, `next_open`, `hours`) |
+| `POST /order/api/checkout` | Server mints a Square hosted payment link when the shop is open (token never in the browser). HTTP 409 `error=closed` outside business hours |
 | `POST /order/api/account/phone` `POST /order/api/customer` | Sunshine phone login / signup. Returns `session_token` (no email). |
 | `POST /order/api/account/profile` `POST /order/api/customer/profile` | Update Square name / email for the session customer. Requires session token. |
 | `GET /order/api/account` `GET /order/api/customer` `GET /order/api/account/status` `GET /order/api/orders` | Account + orders. Requires `Authorization: Bearer <session_token>` (or `X-Session-Token`). |
