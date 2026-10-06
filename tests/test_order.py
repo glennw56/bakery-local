@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.catalog import clear_menu_cache  # noqa: E402
 from app.drinks import is_drink  # noqa: E402
 from app.main import app  # noqa: E402
+from app import hours as hours_svc  # noqa: E402
 from app import order as order_svc  # noqa: E402
 from tests.fixtures.sample_catalog import (  # noqa: E402
     IRONDALE,
@@ -71,11 +72,13 @@ CATALOG_CART = {
 def setup_function() -> None:
     clear_menu_cache()
     order_svc.reset_ready_sms_state()
+    hours_svc.clear_hours_cache()
 
 
 def teardown_function() -> None:
     clear_menu_cache()
     order_svc.reset_ready_sms_state()
+    hours_svc.clear_hours_cache()
 
 
 def test_all_catalog_names_are_drinks() -> None:

@@ -45,6 +45,7 @@ Same secret pattern as ingest. **Never put a Square token in client JS, the imag
 | `LOCATION_ID` or `SQUARE_LOCATION_ID` | fallback | Used if the Irondale-specific var is empty. |
 | `SQUARE_API_BASE` | no | Default `https://connect.squareup.com`. |
 | `CATALOG_CACHE_SECONDS` | no | How long the drinks service caches Catalog (default `90`). Set `0` to fetch every menu load. |
+| `HOURS_CACHE_SECONDS` | no | How long a successful Square location `business_hours` read is reused (default `600`, about 10 minutes). A failed read is not retried for 60 seconds. |
 | `ORDER_PUBLIC_URL` | recommended | Public origin of this Cloud Run service, no trailing slash, e.g. `https://bakery-drinks-xxxxx-ue.a.run.app`. Used as Square `redirect_url` after pay. |
 | `GETORDERS_URL` | already set | Board live pull. Unchanged. |
 | `INGEST_KEY` | already set | Ingest hook only. Not used by `/order`. |
@@ -88,6 +89,8 @@ CreatePaymentLink needs **ORDERS_READ, ORDERS_WRITE, PAYMENTS_WRITE**.
 Sunshine phone login also needs **CUSTOMERS_READ**, **CUSTOMERS_WRITE**, **ORDERS_READ**, and **LOYALTY_READ** / **LOYALTY_WRITE** when the client opts into loyalty on POST.
 
 Live menu needs **ITEMS_READ** (Catalog `SearchCatalogItems` / `BatchRetrieve`). If the existing ingest token is payments-read only, `/order/api/menu` returns an empty menu with `catalog_error` until Glenn adds **ITEMS_READ** (or a separate drinks-order secret wired to the same `SQUARE_ACCESS_TOKEN` env name). No new Cloud Run env name is required.
+
+Opening hours need **MERCHANT_PROFILE_READ** (Locations `GET /v2/locations/{id}` only — no location writes). `POST /order/api/checkout` checks the active location's `business_hours` in that location's timezone before it creates a payment link. Closed returns HTTP 409 `{"ok": false, "error": "closed", "message": "We're closed right now. We open at 9:00 AM tomorrow.", "next_open": "<ISO 8601 with offset>"}` and does not call CreatePaymentLink. If the Locations call fails and no schedule is cached, checkout **fails open** (warning log) so a Square hiccup does not block every order; a previously cached schedule is still enforced. `GET /order/api/hours` returns `{open_now, next_open, hours}`. No new required env. Missing `MERCHANT_PROFILE_READ` fails open the same way until the scope is added.
 
 If the ingest token is payments-read only, minting checkout links will 502 until Glenn adds the Orders/Payments write scopes.
 
