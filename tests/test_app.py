@@ -398,6 +398,96 @@ def test_passprnt_ticket_is_claimed_once_and_keeps_its_snapshot() -> None:
     assert "Table 4" not in live.text
 
 
+def test_passprnt_back_url_is_https_behind_the_cloud_run_proxy() -> None:
+    """Cloud Run sends X-Forwarded-Proto. The back URL must use https."""
+    import socket
+    import subprocess
+    import time
+    import urllib.parse
+    import urllib.request
+    from pathlib import Path
+    from urllib.parse import unquote
+
+    import httpx
+
+    entry = Path("scripts/docker-entrypoint.sh").read_text()
+    run = Path("scripts/run.sh").read_text()
+    for script in (entry, run):
+        assert "--proxy-headers" in script
+        assert "--forwarded-allow-ips" in script
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    log = open(f"/tmp/uvicorn-proxy-{port}.log", "w", encoding="utf-8")
+    proc = subprocess.Popen(
+        [
+            ".venv/bin/uvicorn",
+            "app.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--proxy-headers",
+            "--forwarded-allow-ips",
+            "*",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "PYTHONPATH": "."},
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
+    base = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                log.flush()
+                raise AssertionError(Path(log.name).read_text()[-2000:])
+            try:
+                urllib.request.urlopen(base + "/", timeout=0.4)
+                break
+            except Exception:
+                time.sleep(0.15)
+        else:
+            raise AssertionError("uvicorn did not start")
+
+        def place(name: str) -> str:
+            body = urllib.parse.urlencode({"ticket_name": name, "qty_0": "1"}).encode()
+            req = urllib.request.Request(
+                base + "/test/drinks/orders",
+                data=body,
+                headers={"HX-Request": "true"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req) as resp:
+                return resp.headers["X-Print-Order"]
+
+        public = "sunshine-drink-board-test.a.run.app"
+        https_id = place("Proxy")
+        claimed = httpx.post(
+            f"{base}/test/drinks/orders/{https_id}/print-claim",
+            headers={"X-Forwarded-Proto": "https", "Host": public},
+        )
+        assert claimed.status_code == 200
+        back = claimed.json()["passprnt"].split("back=")[1]
+        assert unquote(back).startswith(f"https://{public}/test/drinks?print_order={https_id}")
+
+        local_id = place("Local")
+        plain = httpx.post(f"{base}/test/drinks/orders/{local_id}/print-claim")
+        assert plain.status_code == 200
+        local_back = unquote(plain.json()["passprnt"].split("back=")[1])
+        assert local_back.startswith(f"http://127.0.0.1:{port}/test/drinks?print_order={local_id}")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        log.close()
+
+
 def test_clearing_one_of_a_double_leaves_the_order() -> None:
     _reset_drink_orders()
     placed = _place_drink_order("Double", **{"0": 2})

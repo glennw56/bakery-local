@@ -89,6 +89,8 @@ Placing an order on that tablet opens PassPRNT, prints the ticket, and returns t
 
 PassPRNT is called as `starpassprnt://v1/print/nopreview` with `html` (the ticket), `size=406` (406 dots, the TSP100IV 58mm print width), `cut=partial`, `popup=disable`, and `back` set to this board. `size=2w7` is not used: Star’s table does not list it for the TSP100IV, and an invalid size falls back to 72mm.
 
+On Cloud Run the container sees plain HTTP from the platform proxy. Uvicorn is started with `--proxy-headers --forwarded-allow-ips='*'` (`scripts/docker-entrypoint.sh` and `scripts/run.sh`) so `X-Forwarded-Proto: https` makes that back URL `https`. The proxy address is not localhost, and the default allow list would ignore the header.
+
 ## Loyalty + CSV + hometown
 
 `GET /loyalty` is the Marketing/Books desk. Filter by name/phone/email, segment (active / lapsed / ready to redeem / never purchased / email / phone-only / local 205 / Alabama / out of state / unknown phone), and sort.
