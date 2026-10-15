@@ -324,6 +324,80 @@ def test_queue_fifo_three_oldest_partial_clear_and_slide_in() -> None:
     assert _waiting(slid.text) == ["Ned", "Cal"]
 
 
+def test_passprnt_ticket_is_claimed_once_and_keeps_its_snapshot() -> None:
+    """Placing an order queues one 58mm PassPRNT ticket. A second claim does not print it again."""
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    _reset_drink_orders()
+    placed = _place_drink_order("Table 4", **{"0": 1, "1": 1, "2": 1})
+    assert placed.headers.get("X-Print-Order")
+    order_id = placed.headers["X-Print-Order"]
+
+    feed = client.get("/test/drinks/print-feed")
+    assert feed.status_code == 200
+    assert [row["id"] for row in feed.json()["orders"]] == [int(order_id)]
+
+    claim = client.post(f"/test/drinks/orders/{order_id}/print-claim")
+    assert claim.status_code == 200
+    url = claim.json()["passprnt"]
+    parsed = urlparse(url)
+    assert parsed.scheme == "starpassprnt"
+    assert parsed.netloc == "v1"
+    assert parsed.path == "/print/nopreview"
+    query = parse_qs(parsed.query)
+    assert query["size"] == ["406"]
+    assert query["cut"] == ["partial"]
+    assert query["popup"] == ["disable"]
+    assert "2w7" not in url
+    assert query["back"][0].endswith(f"/test/drinks?print_order={order_id}")
+    ticket_html = query["html"][0]
+    assert "Table 4" in ticket_html
+    assert f"Order {order_id}" in ticket_html
+    assert "Fruit Tea" in ticket_html
+    assert "Strawberry" in ticket_html
+    assert "Viet Coffee" in ticket_html
+    assert "Oat milk" in ticket_html
+    assert "Milk Tea" in ticket_html
+    assert "Taro" in ticket_html
+    assert "3 drinks" in ticket_html
+    assert "50.8mm" in ticket_html
+    assert len(url) < 8000
+
+    again = client.post(f"/test/drinks/orders/{order_id}/print-claim")
+    assert again.status_code == 409
+    quiet = client.get("/test/drinks/print-feed")
+    assert quiet.json()["orders"] == []
+
+    # Clearing a drink on the board does not change the ticket that will print.
+    import re
+
+    line = re.search(r'hx-delete="(/test/drinks/lines/\d+)"', placed.text)
+    assert line
+    client.delete(line.group(1), headers={"HX-Request": "true"})
+    preview = client.get(f"/test/drinks/orders/{order_id}/ticket")
+    assert preview.status_code == 200
+    assert "Fruit Tea" in preview.text
+    assert "Viet Coffee" in preview.text
+    assert "Milk Tea" in preview.text
+    assert unquote(query["html"][0]) == preview.text or query["html"][0] == preview.text
+
+    failed = client.post(f"/test/drinks/orders/{order_id}/print-release")
+    assert failed.json()["status"] == "pending"
+    assert client.get("/test/drinks/print-feed").json()["orders"][0]["id"] == int(order_id)
+
+    client.post(f"/test/drinks/orders/{order_id}/print-claim")
+    done = client.post(f"/test/drinks/orders/{order_id}/print-done")
+    assert done.json()["status"] == "printed"
+    assert client.get("/test/drinks/print-feed").json()["orders"] == []
+    # A finished ticket is not printed again, even if PassPRNT returns an error later.
+    client.post(f"/test/drinks/orders/{order_id}/print-release")
+    assert client.get("/test/drinks/print-feed").json()["orders"] == []
+
+    live = client.get("/board")
+    assert "starpassprnt" not in live.text
+    assert "Table 4" not in live.text
+
+
 def test_clearing_one_of_a_double_leaves_the_order() -> None:
     _reset_drink_orders()
     placed = _place_drink_order("Double", **{"0": 2})

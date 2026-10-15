@@ -18,7 +18,7 @@ import json
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import TestDrinkLine, TestDrinkOrder
+from app.models import TestDrinkLine, TestDrinkOrder, TestPrintJob
 
 BOARD_SLOTS = 3
 MAX_QTY = 9
@@ -142,6 +142,7 @@ def clear_drink_line(db: Session, line_id: int) -> None:
 
 
 def reset_test_orders(db: Session) -> None:
+    db.execute(delete(TestPrintJob))
     db.execute(delete(TestDrinkLine))
     db.execute(delete(TestDrinkOrder))
     db.commit()

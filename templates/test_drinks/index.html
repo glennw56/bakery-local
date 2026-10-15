@@ -16,6 +16,10 @@
       <span class="kds-window">Drinks only · 3 oldest open orders · tap a drink to clear it · not the live board · America/Chicago</span>
     </div>
     <div class="kds-tools">
+      <label class="kds-print-toggle">
+        <input type="checkbox" id="print-tablet">
+        Print on this tablet
+      </label>
       <a class="kds-live-link" href="/board">Live board</a>
       <button type="button"
               class="kds-demo"
@@ -36,7 +40,7 @@
           hx-disabled-elt="find button"
           hx-on::after-request="if (event.detail.successful &amp;&amp; (event.detail.xhr.getResponseHeader('HX-Trigger') || '') === 'orderPlaced') this.reset()">
       <h2>Drink menu</h2>
-      <p class="kds-menu-note">Same drinks as the kitchen board. Set a quantity, then place one order. This counter does not take food.</p>
+      <p class="kds-menu-note">Same drinks as the kitchen board. Set a quantity, then place one order. This counter does not take food. With “Print on this tablet” on, a new order opens PassPRNT and comes back here. Each order prints once.</p>
       <label class="kds-name-field">
         Order name
         <input name="ticket_name" maxlength="80" placeholder="Walk-in" autocomplete="off">
@@ -77,5 +81,6 @@
       {% include "test_drinks/_board.html" %}
     </section>
   </div>
+  <script src="/static/print-tablet.js"></script>
 </body>
 </html>

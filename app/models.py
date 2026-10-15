@@ -120,6 +120,26 @@ class TestDrinkLine(Base):
     order: Mapped[TestDrinkOrder] = relationship(back_populates="lines")
 
 
+class TestPrintJob(Base):
+    """One PassPRNT ticket for a test drink order.
+
+    The ticket JSON is a snapshot from the moment the order was placed, so
+    clearing drinks on the board does not change what the tablet prints.
+    order_id is not a foreign key: the order can leave the board before the
+    tablet has printed.
+    """
+
+    __tablename__ = "test_print_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    ticket_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    printed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class LoyaltyMember(Base):
     """One Square loyalty account, denormalized for list/export.
 

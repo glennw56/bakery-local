@@ -23,13 +23,24 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db, init_db
+from app.passprnt import (
+    claim_job,
+    enqueue_print_job,
+    finish_job,
+    job_for_order,
+    load_ticket,
+    passprnt_url,
+    pending_jobs,
+    release_job,
+    render_ticket_html,
+)
 from app.drink_orders import (
     BOARD_SLOTS,
     OrderRejected,
@@ -530,17 +541,81 @@ def test_drinks_place(
             test_board_context(db, error=exc.message),
             status_code=400,
         )
-    create_test_order(
+    order = create_test_order(
         db,
         ordered_at=_utc_now(),
         ticket_name=normalize_ticket_name(form.get("ticket_name", "")),
         lines=lines,
     )
+    enqueue_print_job(db, order, chicago_clock(order.ordered_at))
     if _is_htmx(request):
         response = _test_board_response(request, db)
         response.headers["HX-Trigger"] = "orderPlaced"
+        response.headers["X-Print-Order"] = str(order.id)
         return response
     return RedirectResponse("/test/drinks", status_code=303)
+
+
+def _print_back_url(request: Request, order_id: int) -> str:
+    base = str(request.base_url).rstrip("/")
+    return f"{base}/test/drinks?print_order={order_id}"
+
+
+def _passprnt_for_job(request: Request, job) -> str:
+    return passprnt_url(render_ticket_html(load_ticket(job)), _print_back_url(request, job.order_id))
+
+
+@app.get("/test/drinks/orders/{order_id}/ticket", response_class=HTMLResponse)
+def test_drinks_ticket(order_id: int, db: Session = Depends(get_db)):
+    """The same HTML PassPRNT prints. Useful as a preview on a laptop."""
+    job = job_for_order(db, order_id)
+    if job is None:
+        return Response("No ticket for that order.", status_code=404)
+    return HTMLResponse(render_ticket_html(load_ticket(job)))
+
+
+@app.get("/test/drinks/print-feed")
+def test_drinks_print_feed(db: Session = Depends(get_db)):
+    """Orders the barista tablet has not printed yet, oldest first."""
+    jobs = pending_jobs(db)
+    return {
+        "orders": [
+            {
+                "id": job.order_id,
+                "ticket_name": load_ticket(job).get("ticket_name") or "",
+                "created_ms": int(job.created_at.replace(tzinfo=timezone.utc).timestamp() * 1000),
+            }
+            for job in jobs
+        ]
+    }
+
+
+@app.post("/test/drinks/orders/{order_id}/print-claim")
+def test_drinks_print_claim(order_id: int, request: Request, db: Session = Depends(get_db)):
+    """One tablet claims the ticket. A second claim does not print it again."""
+    job = claim_job(db, order_id)
+    if job is None:
+        return JSONResponse({"error": "already taken"}, status_code=409)
+    return {
+        "order_id": job.order_id,
+        "passprnt": _passprnt_for_job(request, job),
+    }
+
+
+@app.post("/test/drinks/orders/{order_id}/print-done")
+def test_drinks_print_done(order_id: int, db: Session = Depends(get_db)):
+    job = finish_job(db, order_id)
+    if job is None:
+        return JSONResponse({"error": "unknown order"}, status_code=404)
+    return {"order_id": job.order_id, "status": job.status}
+
+
+@app.post("/test/drinks/orders/{order_id}/print-release")
+def test_drinks_print_release(order_id: int, db: Session = Depends(get_db)):
+    job = release_job(db, order_id)
+    if job is None:
+        return JSONResponse({"error": "unknown order"}, status_code=404)
+    return {"order_id": job.order_id, "status": job.status}
 
 
 @app.delete("/test/drinks/lines/{line_id}", response_class=HTMLResponse)

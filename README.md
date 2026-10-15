@@ -36,6 +36,11 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 | `DELETE /board/tickets/{id}` | Tap-to-clear: drink is made, ticket drops off |
 | `POST /board/demo-tick` | Dev-only: insert a random demo drink (no Square) |
 | `GET /test/drinks` | Local test only: place drink orders, see the 3 oldest, clear one drink at a time |
+| `GET /test/drinks/orders/{id}/ticket` | 58mm ticket HTML (the same page PassPRNT prints) |
+| `GET /test/drinks/print-feed` | Orders waiting to print, oldest first |
+| `POST /test/drinks/orders/{id}/print-claim` | Claim one ticket and return the PassPRNT URL |
+| `POST /test/drinks/orders/{id}/print-done` | Mark that ticket printed |
+| `POST /test/drinks/orders/{id}/print-release` | Put a failed ticket back in the queue |
 | `GET /loyalty` | Member book: search, segment chips, hometown rollup, dense table |
 | `GET /loyalty.csv` | Same filters as the list, UTF-8 CSV attachment |
 | `GET /loyalty/{id}` | One-member dossier (balance, marketing, points ledger) |
@@ -69,7 +74,20 @@ http://127.0.0.1:8000/test/drinks
 
 The menu is the same demo drink list the kitchen board already uses (Fruit Tea, Viet Coffee, Milk Tea, Matcha, Biscoff, with the same modifiers). Set quantities and place an order. The barista side shows the **3 oldest** open orders, oldest first. Drinks you have not started stay in a waiting row. Tap a drink to clear that drink. The order leaves the board only when every drink on it is cleared, and the next oldest order slides into the open slot.
 
-Test orders are stored in `test_drink_orders` / `test_drink_lines`. **Clear test orders** wipes those rows only.
+Test orders are stored in `test_drink_orders` / `test_drink_lines`. **Clear test orders** wipes those rows and any unprinted tickets.
+
+## Drink ticket on the tablet (PassPRNT)
+
+The drink station tablet prints on the existing Star TSP100IV over Bluetooth. Square Register and its Bluetooth printer are not involved.
+
+1. Install Star’s free **PassPRNT** app on the tablet (iOS or Android).
+2. In the tablet’s Bluetooth settings, pair the TSP100IV. In PassPRNT, pick that printer. Load 58mm paper with the paper guide. The TSP100IV prints 50.8mm of that roll.
+3. On the shop laptop, `HOST=0.0.0.0 ./scripts/run.sh`. On the tablet, open `http://<laptop-lan-ip>:8000/test/drinks`.
+4. Turn on **Print on this tablet**. Leave that tab open.
+
+Placing an order on that tablet opens PassPRNT, prints the ticket, and returns to the board. Orders placed from any other device print once on this tablet, oldest first. The same order is not printed twice. The ticket shows the order name and number, the time, each drink in large type with its modifiers, and the drink count.
+
+PassPRNT is called as `starpassprnt://v1/print/nopreview` with `html` (the ticket), `size=406` (406 dots, the TSP100IV 58mm print width), `cut=partial`, `popup=disable`, and `back` set to this board. `size=2w7` is not used: Star’s table does not list it for the TSP100IV, and an invalid size falls back to 72mm.
 
 ## Loyalty + CSV + hometown
 
