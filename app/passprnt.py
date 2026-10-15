@@ -154,6 +154,20 @@ def render_ticket_html(ticket: dict) -> str:
 """
 
 
+def sample_ticket() -> dict:
+    """A short slip used only by the Test print button. Not a real order."""
+    return {
+        "order_id": "Test",
+        "ticket_name": "Test print",
+        "clock": "Sample",
+        "drink_index": 1,
+        "drink_total": 1,
+        "drink_name": "Sample",
+        "qty": 1,
+        "modifiers": [],
+    }
+
+
 def passprnt_url(ticket_html: str, back: str) -> str:
     """Build the URL the tablet opens. back is where PassPRNT returns."""
     query = "&".join(

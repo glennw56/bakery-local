@@ -539,6 +539,46 @@ def test_passprnt_back_url_is_https_behind_the_cloud_run_proxy() -> None:
         log.close()
 
 
+def test_test_print_is_a_direct_link_and_queued_drinks_wait_for_a_tap() -> None:
+    """Android Chrome blocks starpassprnt:// unless the tap itself opens it."""
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    page = client.get("/test/drinks")
+    assert page.status_code == 200
+    assert 'id="test-print"' in page.text
+    assert 'id="print-next"' in page.text
+    assert "Print next drink" in page.text
+    assert 'id="print-fallback"' in page.text
+    assert "Tap to print" in page.text
+    assert 'id="print-status"' in page.text
+
+    href = page.text.split('id="test-print" href="', 1)[1].split('"', 1)[0]
+    href = href.replace("&amp;", "&")
+    parsed = urlparse(href)
+    assert parsed.scheme == "starpassprnt"
+    query = parse_qs(parsed.query)
+    ticket = unquote(query["html"][0])
+    assert query["size"] == ["406"]
+    assert query["cut"] == ["partial"]
+    assert query["popup"] == ["disable"]
+    assert "Test print" in ticket
+    assert "Sample" in ticket
+    assert "Drink 1 of 1" in ticket
+    assert query["back"][0].endswith("/test/drinks?print_test=1")
+
+    script = client.get("/static/print-tablet.js")
+    assert script.status_code == 200
+    source = script.text
+    assert "Sending to PassPRNT" in source
+    assert "setInterval(refreshNext, 4000)" in source
+    assert "setInterval(pullNext" not in source
+    assert "setInterval(claim" not in source
+    # Place order and Print next drink assign the custom scheme inside the click.
+    assert 'placeBtn.addEventListener("click"' in source
+    assert 'nextBtn.addEventListener("click"' in source
+    assert "openPassprnt" in source
+
+
 def test_clearing_one_of_a_double_leaves_the_order() -> None:
     _reset_drink_orders()
     placed = _place_drink_order("Double", **{"0": 2})

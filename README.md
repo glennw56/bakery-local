@@ -86,9 +86,11 @@ The drink station tablet prints on the existing Star TSP100IV over Bluetooth. Sq
 3. On the shop laptop, `HOST=0.0.0.0 ./scripts/run.sh`. On the tablet, open `http://<laptop-lan-ip>:8000/test/drinks`.
 4. Turn on **Print on this tablet**. Leave that tab open.
 
-Placing an order on that tablet opens PassPRNT once per drink. Each ticket shows the order name and number, the time, that one drink in large type with its modifiers, and `Drink 1 of 3` numbering. PassPRNT cuts after each job (`cut=partial`), then returns to the board, which sends the next drink. A quantity above 1 stays on that drink's ticket as ×N. The board does not add a drink onto an order that is already open; a new line queued later prints by itself and does not reprint the drinks already sent.
+**Test print**, next to the toggle, is a normal link. Tap it to send a one-line sample ticket. It does not place an order.
 
-Orders placed from any other device print the same way, one drink at a time, oldest first. Each drink line prints once. A failed return puts only that drink back in the queue.
+Android Chrome will not open `starpassprnt://` from a timer, a poll, or the callback after `fetch`. With **Print on this tablet** on, the Place order tap itself sends the first drink (the request finishes in that tap, then the page opens PassPRNT). The status line says **Sending to PassPRNT…**. If the page is still here after 2 seconds, it shows **Tap to print**. Drinks that arrive from another device, and the rest of a multi-drink order, stay on a **Print next drink** button. Nothing is sent until that button is tapped. Each ticket shows the order name and number, the time, that one drink in large type with its modifiers, and `Drink 1 of 3` numbering. PassPRNT cuts after each job (`cut=partial`). A quantity above 1 stays on that drink's ticket as ×N. The board does not add a drink onto an order that is already open; a new line queued later prints by itself and does not reprint the drinks already sent.
+
+Each drink line prints once. A failed return puts only that drink back on **Print next drink**.
 
 PassPRNT is called as `starpassprnt://v1/print/nopreview` with `html` (one drink), `size=406` (406 dots, the TSP100IV 58mm print width), `cut=partial`, `popup=disable`, and `back` set to this board. Separate jobs are used because PassPRNT applies `cut` after the whole job, and HTML becomes one raster, so a page break in one document would not cut between drinks. `size=2w7` is not used: Star’s table does not list it for the TSP100IV, and an invalid size falls back to 72mm.
 

@@ -41,6 +41,7 @@ from app.passprnt import (
     pending_jobs,
     release_job,
     render_ticket_html,
+    sample_ticket,
 )
 from app.drink_orders import (
     BOARD_SLOTS,
@@ -500,6 +501,12 @@ def test_board_context(db: Session, error: str = "") -> dict:
     }
 
 
+def _with_test_print(request: Request, context: dict) -> dict:
+    back = f"{str(request.base_url).rstrip('/')}/test/drinks?print_test=1"
+    context["test_print_url"] = passprnt_url(render_ticket_html(sample_ticket()), back)
+    return context
+
+
 def _test_board_response(request: Request, db: Session, error: str = ""):
     return templates.TemplateResponse(
         request,
@@ -514,7 +521,7 @@ def test_drinks_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "test_drinks/index.html",
-        test_board_context(db),
+        _with_test_print(request, test_board_context(db)),
     )
 
 
@@ -539,7 +546,7 @@ def test_drinks_place(
         return templates.TemplateResponse(
             request,
             "test_drinks/index.html",
-            test_board_context(db, error=exc.message),
+            _with_test_print(request, test_board_context(db, error=exc.message)),
             status_code=400,
         )
     order = create_test_order(
@@ -573,6 +580,7 @@ def _print_row(job) -> dict:
         "id": job.line_id,
         "order_id": job.order_id,
         "ticket_name": ticket.get("ticket_name") or "",
+        "drink_name": ticket.get("drink_name") or "",
         "created_ms": int(job.created_at.replace(tzinfo=timezone.utc).timestamp() * 1000),
     }
 
