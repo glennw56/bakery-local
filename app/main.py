@@ -617,9 +617,18 @@ def test_drinks_ticket(order_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/test/drinks/print-feed")
-def test_drinks_print_feed(db: Session = Depends(get_db)):
-    """Drink lines the barista tablet has not printed yet, oldest first."""
-    return {"drinks": [_print_row(job) for job in pending_jobs(db)]}
+def test_drinks_print_feed(request: Request, db: Session = Depends(get_db)):
+    """Drink lines waiting to print, oldest first, each with its PassPRNT link.
+
+    The link is built here so the page can put it on a real <a href> before
+    the barista taps. The tap claims the line and does not wait on that claim.
+    """
+    drinks = []
+    for job in pending_jobs(db):
+        row = _print_row(job)
+        row["passprnt"] = _passprnt_for_job(request, job)
+        drinks.append(row)
+    return {"drinks": drinks}
 
 
 @app.post("/test/drinks/lines/{line_id}/print-claim")

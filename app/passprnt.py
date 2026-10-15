@@ -69,89 +69,45 @@ def ticket_for_line(order, line, clock: str, index: int, total: int) -> dict:
 
 
 def render_ticket_html(ticket: dict) -> str:
-    """HTML PassPRNT turns into one 58mm drink. CSS is inline."""
+    """One small 58mm slip. Styles sit on the tags, same shape as Test print.
+
+    A style block or an image makes the starpassprnt:// URL long enough that
+    Android Chrome drops it. Test print works because this HTML stays short.
+    """
     index = int(ticket.get("drink_index") or 1)
     total = int(ticket.get("drink_total") or 1)
     count_label = f"Drink {index} of {total}"
     qty = int(ticket.get("qty") or 1)
-    qty_html = f' <span class="qty">×{qty}</span>' if qty > 1 else ""
+    name = html.escape(str(ticket.get("drink_name") or ""))
+    if qty > 1:
+        name += f" ×{qty}"
     mods = []
     for mod in ticket.get("modifiers") or []:
         group = mod.get("group") or ""
         value = mod.get("value") or ""
         label = f"{group} {value}".strip() if group else value
-        mods.append(f'<p class="mod">{html.escape(label)}</p>')
-    body = (
-        "<section class=\"drink\">"
-        f'<h2>{html.escape(str(ticket.get("drink_name") or ""))}{qty_html}</h2>'
+        mods.append(
+            f'<p style="margin:0.3mm 0 0;font-size:14px;font-weight:700">{html.escape(label)}</p>'
+        )
+    return (
+        "<!DOCTYPE html><html><head>"
+        '<meta charset="utf-8">'
+        '<meta name="format-detection" content="telephone=no">'
+        "</head><body style=\"margin:0;width:"
+        f"{PRINT_WIDTH_MM}mm;background:#fff;color:#000;font-family:Arial,sans-serif\">"
+        '<p style="margin:0;font-size:12px;font-weight:700">Order '
+        f'{html.escape(str(ticket.get("order_id") or ""))}</p>'
+        '<h1 style="margin:1mm 0 0;font-size:22px;line-height:1.05">'
+        f'{html.escape(str(ticket.get("ticket_name") or "Walk-in"))}</h1>'
+        '<p style="margin:0.5mm 0 1.5mm;font-size:14px;font-weight:700">'
+        f'{html.escape(str(ticket.get("clock") or ""))}</p>'
+        '<h2 style="margin:0;padding-top:1.2mm;border-top:0.4mm solid #000;font-size:22px;line-height:1.05">'
+        f"{name}</h2>"
         f'{"".join(mods)}'
-        "</section>"
+        '<p style="margin:1.5mm 0 0;padding-top:1.2mm;border-top:0.6mm solid #000;font-size:18px;font-weight:800">'
+        f"{html.escape(count_label)}</p>"
+        "</body></html>"
     )
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="format-detection" content="telephone=no">
-<title>Drink ticket {html.escape(str(ticket.get("order_id") or ""))}</title>
-<style>
-  html, body {{ margin: 0; padding: 0; background: #fff; color: #000; }}
-  body {{
-    width: {PRINT_WIDTH_MM}mm;
-    font-family: Arial, Helvetica, sans-serif;
-  }}
-  .num {{
-    margin: 0;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-  }}
-  h1 {{
-    margin: 1mm 0 0;
-    font-size: 22px;
-    line-height: 1.05;
-    font-weight: 800;
-  }}
-  .time {{
-    margin: 0.5mm 0 1.5mm;
-    font-size: 14px;
-    font-weight: 700;
-  }}
-  .drink {{
-    margin: 0;
-    padding: 1.2mm 0 0.4mm;
-    border-top: 0.4mm solid #000;
-  }}
-  h2 {{
-    margin: 0;
-    font-size: 22px;
-    line-height: 1.05;
-    font-weight: 800;
-  }}
-  .qty {{ font-size: 16px; }}
-  .mod {{
-    margin: 0.3mm 0 0;
-    font-size: 14px;
-    line-height: 1.15;
-    font-weight: 700;
-  }}
-  .count {{
-    margin: 1.5mm 0 0;
-    padding-top: 1.2mm;
-    border-top: 0.6mm solid #000;
-    font-size: 18px;
-    font-weight: 800;
-  }}
-</style>
-</head>
-<body>
-<p class="num">Order {html.escape(str(ticket.get("order_id") or ""))}</p>
-<h1>{html.escape(str(ticket.get("ticket_name") or "Walk-in"))}</h1>
-<p class="time">{html.escape(str(ticket.get("clock") or ""))}</p>
-{body}
-<p class="count">{html.escape(count_label)}</p>
-</body>
-</html>
-"""
 
 
 def sample_ticket() -> dict:

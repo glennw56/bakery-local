@@ -32,8 +32,7 @@
   </header>
   <div class="kds-print-banner" id="print-banner" hidden>
     <p id="print-status" class="kds-print-status" role="status"></p>
-    <button type="button" id="print-next" class="kds-print-next" hidden>Print next drink</button>
-    <a id="print-fallback" class="kds-print-fallback" hidden href="">Tap to print</a>
+    <a id="print-next" class="kds-print-next" hidden>Print</a>
   </div>
 
   <div class="kds-test-stage">
@@ -46,7 +45,7 @@
           hx-disabled-elt="find button"
           hx-on::after-request="if (event.detail.successful &amp;&amp; (event.detail.xhr.getResponseHeader('HX-Trigger') || '') === 'orderPlaced') this.reset()">
       <h2>Drink menu</h2>
-      <p class="kds-menu-note">Same drinks as the kitchen board. Set a quantity, then place one order. This counter does not take food. With “Print on this tablet” on, Place order sends the first drink to PassPRNT. Tap Print next drink for each drink after that. Test print checks the printer without placing an order.</p>
+      <p class="kds-menu-note">Same drinks as the kitchen board. Set a quantity, then place one order. This counter does not take food. With “Print on this tablet” on, placing an order shows a Print link for each drink. That link works the same way as Test print. Tap it once per drink.</p>
       <label class="kds-name-field">
         Order name
         <input name="ticket_name" maxlength="80" placeholder="Walk-in" autocomplete="off">

@@ -1,19 +1,16 @@
 /* Barista tablet: Star PassPRNT on the paired TSP100IV (58mm, Bluetooth).
-   Android Chrome drops starpassprnt:// navigations that are not a user tap
-   (fetch, poll, and timers included). Place order opens the first drink
-   inside that tap. Later drinks wait on Print next drink. */
+   Android Chrome only opens starpassprnt:// from a real link tap.
+   Print links are <a href="starpassprnt://..."> set before the tap.
+   The claim is a beacon and does not block that navigation. */
 (function () {
   var KEY = "sunshine-print-tablet";
   var SINCE = "sunshine-print-since";
   var box = document.getElementById("print-tablet");
   var banner = document.getElementById("print-banner");
   var statusEl = document.getElementById("print-status");
-  var nextBtn = document.getElementById("print-next");
-  var fallback = document.getElementById("print-fallback");
+  var printLink = document.getElementById("print-next");
   var testLink = document.getElementById("test-print");
-  var form = document.querySelector("form.kds-menu");
-  var placeBtn = form ? form.querySelector("button.kds-place") : null;
-  var fallbackTimer = 0;
+  var statusTimer = 0;
 
   function enabled() {
     try {
@@ -44,9 +41,7 @@
 
   function showBanner() {
     if (!banner) return;
-    var busy = (statusEl && statusEl.textContent) ||
-      (nextBtn && !nextBtn.hidden) ||
-      (fallback && !fallback.hidden);
+    var busy = (statusEl && statusEl.textContent) || (printLink && !printLink.hidden);
     banner.hidden = !busy;
   }
 
@@ -55,58 +50,34 @@
     showBanner();
   }
 
-  function armFallback(url) {
+  function noteSending() {
     setStatus("Sending to PassPRNT…");
-    if (!fallback) return;
-    fallback.href = url;
-    fallback.hidden = true;
-    showBanner();
-    window.clearTimeout(fallbackTimer);
-    fallbackTimer = window.setTimeout(function () {
+    window.clearTimeout(statusTimer);
+    statusTimer = window.setTimeout(function () {
       if (document.visibilityState !== "visible") return;
-      setStatus("PassPRNT did not open.");
-      fallback.hidden = false;
-      showBanner();
+      setStatus("PassPRNT did not open. Tap Print again.");
     }, 2000);
   }
 
-  function openPassprnt(url) {
-    armFallback(url);
-    window.location.href = url;
-  }
-
-  function syncPost(url, body) {
-    var xhr = new XMLHttpRequest();
-    xhr.open("POST", url, false);
-    if (body) {
-      xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-      xhr.setRequestHeader("HX-Request", "true");
+  function claim(lineId) {
+    if (!lineId) return;
+    var url = "/test/drinks/lines/" + lineId + "/print-claim";
+    var sent = false;
+    try {
+      if (navigator.sendBeacon) sent = navigator.sendBeacon(url);
+    } catch (err) {
+      sent = false;
     }
-    xhr.send(body || null);
-    return xhr;
-  }
-
-  function formBody(target) {
-    var params = new URLSearchParams();
-    var elements = target.elements;
-    for (var i = 0; i < elements.length; i++) {
-      var el = elements[i];
-      if (!el.name || el.disabled) continue;
-      if ((el.type === "checkbox" || el.type === "radio") && !el.checked) continue;
-      params.append(el.name, el.value);
+    if (!sent) {
+      fetch(url, {method: "POST", keepalive: true}).catch(function () {});
     }
-    return params.toString();
-  }
-
-  function labelFor(drink) {
-    var name = (drink && (drink.drink_name || drink.ticket_name)) || "";
-    return name ? "Print next drink · " + name : "Print next drink";
   }
 
   function refreshNext() {
-    if (!nextBtn) return Promise.resolve(false);
+    if (!printLink) return Promise.resolve(false);
     if (!enabled()) {
-      nextBtn.hidden = true;
+      printLink.hidden = true;
+      printLink.removeAttribute("href");
       showBanner();
       return Promise.resolve(false);
     }
@@ -116,16 +87,19 @@
         var drinks = (data && data.drinks) || [];
         var cutoff = sinceMs();
         for (var i = 0; i < drinks.length; i++) {
-          if (Number(drinks[i].created_ms) > cutoff) {
-            nextBtn.hidden = false;
-            nextBtn.setAttribute("data-line", String(drinks[i].id));
-            nextBtn.textContent = labelFor(drinks[i]);
+          if (Number(drinks[i].created_ms) > cutoff && drinks[i].passprnt) {
+            printLink.hidden = false;
+            printLink.href = drinks[i].passprnt;
+            printLink.setAttribute("data-line", String(drinks[i].id));
+            var name = drinks[i].drink_name || drinks[i].ticket_name || "";
+            printLink.textContent = name ? "Print · " + name : "Print";
             showBanner();
             return true;
           }
         }
-        nextBtn.hidden = true;
-        nextBtn.removeAttribute("data-line");
+        printLink.hidden = true;
+        printLink.removeAttribute("href");
+        printLink.removeAttribute("data-line");
         showBanner();
         return false;
       })
@@ -141,109 +115,38 @@
         } catch (err) {}
       }
       setEnabled(box.checked);
-      refreshNext();
+      refreshNext().then(function (ready) {
+        if (ready) setStatus("Tap Print.");
+      });
     });
   }
 
   if (testLink) {
     testLink.addEventListener("click", function () {
-      armFallback(testLink.href);
+      noteSending();
     });
   }
 
-  if (fallback) {
-    fallback.addEventListener("click", function () {
-      setStatus("Sending to PassPRNT…");
+  if (printLink) {
+    printLink.addEventListener("click", function (event) {
+      if (!printLink.getAttribute("href")) {
+        event.preventDefault();
+        return;
+      }
+      claim(printLink.getAttribute("data-line"));
+      noteSending();
     });
   }
 
-  if (nextBtn) {
-    nextBtn.addEventListener("click", function () {
-      var lineId = nextBtn.getAttribute("data-line");
-      if (!lineId) return;
-      var xhr;
-      try {
-        xhr = syncPost("/test/drinks/lines/" + lineId + "/print-claim");
-      } catch (err) {
-        setStatus("Could not reach the printer link. Tap again.");
-        return;
-      }
-      if (xhr.status === 409) {
-        setStatus("That drink is already printing.");
-        refreshNext();
-        return;
-      }
-      if (xhr.status !== 200) {
-        setStatus("Could not reach the printer link. Tap again.");
-        return;
-      }
-      var data = {};
-      try {
-        data = JSON.parse(xhr.responseText);
-      } catch (err) {
-        data = {};
-      }
-      if (!data.passprnt) {
-        setStatus("Could not reach the printer link. Tap again.");
-        return;
-      }
-      nextBtn.hidden = true;
-      openPassprnt(data.passprnt);
+  document.body.addEventListener("htmx:afterRequest", function (event) {
+    var xhr = event.detail && event.detail.xhr;
+    if (!xhr || !event.detail.successful) return;
+    if ((xhr.getResponseHeader("HX-Trigger") || "") !== "orderPlaced") return;
+    if (!enabled()) return;
+    refreshNext().then(function (ready) {
+      if (ready) setStatus("Tap Print.");
     });
-  }
-
-  if (placeBtn && form) {
-    placeBtn.addEventListener("click", function (event) {
-      if (!enabled()) return;
-      event.preventDefault();
-      event.stopPropagation();
-      var placed;
-      try {
-        placed = syncPost("/test/drinks/orders", formBody(form));
-      } catch (err) {
-        setStatus("Could not place the order. Tap again.");
-        return;
-      }
-      var board = document.getElementById("order-board");
-      if (board && placed.responseText) {
-        board.innerHTML = placed.responseText;
-        if (window.htmx) window.htmx.process(board);
-      }
-      var trigger = placed.getResponseHeader("HX-Trigger") || "";
-      if (trigger === "orderPlaced") form.reset();
-      var lines = (placed.getResponseHeader("X-Print-Lines") || "").split(",");
-      var first = lines[0];
-      if (!first) {
-        setStatus("");
-        return;
-      }
-      var claimed;
-      try {
-        claimed = syncPost("/test/drinks/lines/" + first + "/print-claim");
-      } catch (err) {
-        setStatus("Order saved. Tap Print next drink.");
-        refreshNext();
-        return;
-      }
-      if (claimed.status !== 200) {
-        setStatus("Order saved. Tap Print next drink.");
-        refreshNext();
-        return;
-      }
-      var data = {};
-      try {
-        data = JSON.parse(claimed.responseText);
-      } catch (err) {
-        data = {};
-      }
-      if (!data.passprnt) {
-        setStatus("Order saved. Tap Print next drink.");
-        refreshNext();
-        return;
-      }
-      openPassprnt(data.passprnt);
-    }, true);
-  }
+  });
 
   function settleReturn() {
     var params = new URLSearchParams(window.location.search);
@@ -256,17 +159,18 @@
     var lineId = params.get("print_line");
     var code = params.get("passprnt_code");
     if (!lineId || code === null) {
-      refreshNext();
+      refreshNext().then(function (ready) {
+        if (ready) setStatus("Tap Print.");
+      });
       return;
     }
     var path = code === "0" ? "print-done" : "print-release";
-    fetch("/test/drinks/lines/" + lineId + "/" + path, { method: "POST" })
+    fetch("/test/drinks/lines/" + lineId + "/" + path, {method: "POST"})
       .finally(function () {
         window.history.replaceState(null, "", "/test/drinks");
-        if (fallback) fallback.hidden = true;
-        refreshNext().then(function (hasNext) {
-          if (hasNext) {
-            setStatus(code === "0" ? "Tap Print next drink." : "That drink did not print. Tap Print next drink to try again.");
+        refreshNext().then(function (ready) {
+          if (ready) {
+            setStatus(code === "0" ? "Tap Print." : "That drink did not print. Tap Print again.");
           } else {
             setStatus(code === "0" ? "Printed." : "That drink did not print.");
           }
