@@ -314,6 +314,178 @@ body.kds {
   padding: 18vh 1rem;
 }
 
+/* Drink order test — same kitchen colors, orders instead of single tickets. */
+.kds-test-flag {
+  background: #f5c518;
+  color: #111;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-size: 0.85rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 4px;
+}
+.kds-live-link {
+  color: #ffe38a;
+  font-weight: 800;
+  text-decoration: none;
+  align-self: center;
+}
+.kds-live-link:hover { color: #fff; }
+.kds-test-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(17rem, 23rem) minmax(0, 1fr);
+}
+.kds-menu {
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem 0.8rem 1.2rem;
+  border-right: 3px solid #f5c518;
+  background: #101318;
+}
+.kds-menu h2 { color: #fff; font-size: 1.2rem; margin: 0 0 0.25rem; }
+.kds-menu-note { color: #c9c3b5; font-size: 0.9rem; margin: 0 0 0.7rem; }
+.kds-menu label { color: #c9c3b5; }
+.kds-test input {
+  background: #1a1d22;
+  color: #fff;
+  border-color: #555;
+}
+.kds-name-field { margin-bottom: 0.7rem; }
+.kds-name-field input { width: 100%; }
+.kds-menu-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.2rem;
+  gap: 0.45rem;
+  align-items: center;
+  background: #161a20;
+  border: 2px solid #f4f1ea;
+  border-left-width: 8px;
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  margin-bottom: 0.45rem;
+}
+.kds-menu-item h3 { margin: 0; color: #fff; font-size: 1.05rem; }
+.kds-menu-item .kds-mods { margin-top: 0.3rem; }
+.kds-menu-item .kds-mods li { font-size: 0.78rem; padding: 0.08rem 0.45rem; }
+.kds-menu-item input { width: 100%; text-align: center; font-weight: 800; }
+.kds-menu-item.drink-fruit-tea { border-left-color: #e84d6a; }
+.kds-menu-item.drink-viet-coffee { border-left-color: #c47a2c; }
+.kds-menu-item.drink-milk-tea { border-left-color: #8b5a2b; }
+.kds-menu-item.drink-matcha { border-left-color: #3d9b5b; }
+.kds-menu-item.drink-biscoff { border-left-color: #d4a017; }
+.kds-place {
+  width: 100%;
+  margin-top: 0.35rem;
+  background: #f5c518;
+  color: #111;
+}
+.kds-board {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.kds-board-inner {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.kds-board-status {
+  margin: 0;
+  padding: 0.75rem 0.85rem 0.35rem;
+  color: #f5c518;
+  font-weight: 800;
+}
+.kds-order-error {
+  margin: 0.35rem 0.85rem 0.2rem;
+  background: #3a1212;
+  color: #fff;
+  border: 2px solid #e84d6a;
+  border-radius: 6px;
+  padding: 0.45rem 0.7rem;
+  font-weight: 700;
+}
+.kds-waiting {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.15rem 0.85rem 0.2rem;
+}
+.kds-waiting-label {
+  color: #c9c3b5;
+  font-weight: 800;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.kds-waiting-name {
+  background: #2a313c;
+  color: #ffe38a;
+  border-radius: 999px;
+  padding: 0.12rem 0.6rem;
+  font-weight: 800;
+}
+.kds-orders {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+  padding: 0.7rem 0.8rem 1rem;
+  align-content: stretch;
+}
+.kds-order {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+  background: #10141a;
+  border: 3px solid #3c4450;
+  border-radius: 8px;
+  padding: 0.55rem;
+}
+.kds-order-head .kds-name { overflow-wrap: anywhere; }
+.kds-order-meta {
+  margin: 0;
+  color: #c9c3b5;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.kds-order-lines { display: flex; flex-direction: column; gap: 0.5rem; }
+.kds-order .kds-ticket { min-height: 0; }
+.kds-order .kds-ticket h2 { font-size: clamp(1.35rem, 2.2vw, 2rem); }
+.kds-tap {
+  margin: 0.45rem 0 0;
+  color: #ffe38a;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.kds-order-empty {
+  border-style: dashed;
+  color: #6b7280;
+  align-items: center;
+  justify-content: center;
+  min-height: 12rem;
+  font-weight: 800;
+  text-align: center;
+}
+.kds-order-empty p { margin: 0; }
+
+@media (max-width: 980px) {
+  .kds-test-stage { grid-template-columns: 1fr; }
+  .kds-menu {
+    border-right: 0;
+    border-bottom: 3px solid #f5c518;
+    max-height: 42vh;
+  }
+  .kds-orders { grid-template-columns: 1fr; }
+}
+
 
 /* Loyalty desk */
 .loyalty-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }

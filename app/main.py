@@ -6,6 +6,10 @@ are the view; HTMX swaps fragments in place (not an Angular SPA).
 Drink board: last N minutes (default 15), newest first (ordered_at desc).
 Tap a ticket → DELETE /board/tickets/{id} (drink is made, it drops off).
 Demo drink is POST /board/demo-tick. Poll: GET /board/tickets every 10s.
+
+Drink order test (not the live board): /test/drinks. Same demo drink list.
+Orders of those drinks only. The board shows the 3 oldest open orders.
+Tap a drink to clear that drink; the order leaves when every drink is gone.
 """
 
 from __future__ import annotations
@@ -26,6 +30,17 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db, init_db
+from app.drink_orders import (
+    BOARD_SLOTS,
+    OrderRejected,
+    clear_drink_line,
+    create_test_order,
+    lines_from_quantities,
+    list_open_orders,
+    menu_from_demo,
+    normalize_ticket_name,
+    reset_test_orders,
+)
 from app.models import DrinkModifier, DrinkTicket, LoyaltyMember, MerchItem, Note, SalesDaily, SalesSummary
 from app import loyalty as loyalty_svc
 from app import weekend as weekend_svc
@@ -100,6 +115,9 @@ DEMO_DRINKS = [
     ),
 ]
 
+# Same list as the kitchen demo drinks. The test counter orders from this.
+DRINK_MENU = menu_from_demo(DEMO_DRINKS)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -114,6 +132,11 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 def _is_htmx(request: Request) -> bool:
     return request.headers.get("hx-request") == "true"
+
+
+async def form_map(request: Request) -> dict[str, str]:
+    form = await request.form()
+    return {str(key): str(value) for key, value in form.multi_items()}
 
 
 def _utc_now() -> datetime:
@@ -425,6 +448,120 @@ def board_demo_tick(
             {"minutes": minutes, "tickets": ticket_views(rows)},
         )
     return RedirectResponse(f"/board?minutes={minutes}", status_code=303)
+
+
+def test_order_view(order) -> dict:
+    now = datetime.now(timezone.utc)
+    ordered = _as_utc(order.ordered_at)
+    age = max(0, int((now - ordered).total_seconds() // 60))
+    lines = sorted(order.lines, key=lambda line: line.id)
+    return {
+        "id": order.id,
+        "ticket_name": order.ticket_name or "Walk-in",
+        "clock": chicago_clock(order.ordered_at),
+        "age_min": age,
+        "drink_qty": sum(line.qty for line in lines),
+        "lines": [
+            {
+                "id": line.id,
+                "drink_name": line.drink_name,
+                "qty": line.qty,
+                "slug": line.drink_name.lower().replace(" ", "-"),
+                "modifiers": parse_modifiers(line.modifiers_json),
+            }
+            for line in lines
+        ],
+    }
+
+
+def test_board_context(db: Session, error: str = "") -> dict:
+    orders = list_open_orders(db)
+    shown = orders[:BOARD_SLOTS]
+    waiting = orders[BOARD_SLOTS:]
+    return {
+        "orders": [test_order_view(order) for order in shown],
+        "waiting": [test_order_view(order) for order in waiting],
+        "open_count": len(orders),
+        "slots": BOARD_SLOTS,
+        "error": error,
+        "menu": DRINK_MENU,
+    }
+
+
+def _test_board_response(request: Request, db: Session, error: str = ""):
+    return templates.TemplateResponse(
+        request,
+        "test_drinks/_board.html",
+        test_board_context(db, error),
+    )
+
+
+@app.get("/test/drinks", response_class=HTMLResponse)
+def test_drinks_page(request: Request, db: Session = Depends(get_db)):
+    """Local test counter. Does not change the live /board."""
+    return templates.TemplateResponse(
+        request,
+        "test_drinks/index.html",
+        test_board_context(db),
+    )
+
+
+@app.get("/test/drinks/board", response_class=HTMLResponse)
+def test_drinks_board(request: Request, db: Session = Depends(get_db)):
+    return _test_board_response(request, db)
+
+
+@app.post("/test/drinks/orders", response_class=HTMLResponse)
+def test_drinks_place(
+    request: Request,
+    form: dict[str, str] = Depends(form_map),
+    db: Session = Depends(get_db),
+):
+    """Place one order made only of drinks from DRINK_MENU."""
+    quantities = {item["key"]: form.get(f"qty_{item['key']}", "0") for item in DRINK_MENU}
+    try:
+        lines = lines_from_quantities(DRINK_MENU, quantities)
+    except OrderRejected as exc:
+        if _is_htmx(request):
+            return _test_board_response(request, db, error=exc.message)
+        return templates.TemplateResponse(
+            request,
+            "test_drinks/index.html",
+            test_board_context(db, error=exc.message),
+            status_code=400,
+        )
+    create_test_order(
+        db,
+        ordered_at=_utc_now(),
+        ticket_name=normalize_ticket_name(form.get("ticket_name", "")),
+        lines=lines,
+    )
+    if _is_htmx(request):
+        response = _test_board_response(request, db)
+        response.headers["HX-Trigger"] = "orderPlaced"
+        return response
+    return RedirectResponse("/test/drinks", status_code=303)
+
+
+@app.delete("/test/drinks/lines/{line_id}", response_class=HTMLResponse)
+def test_drinks_clear_line(
+    line_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Tap one drink. The order stays until every drink on it is gone."""
+    clear_drink_line(db, line_id)
+    if _is_htmx(request):
+        return _test_board_response(request, db)
+    return RedirectResponse("/test/drinks", status_code=303)
+
+
+@app.post("/test/drinks/reset", response_class=HTMLResponse)
+def test_drinks_reset(request: Request, db: Session = Depends(get_db)):
+    reset_test_orders(db)
+    if _is_htmx(request):
+        return _test_board_response(request, db)
+    return RedirectResponse("/test/drinks", status_code=303)
 
 
 @app.get("/loyalty", response_class=HTMLResponse)

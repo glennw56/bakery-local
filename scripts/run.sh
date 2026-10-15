@@ -22,4 +22,5 @@ esac
 echo "Listening on http://${HOST}:${PORT}  (RELOAD=${RELOAD})"
 echo "Dashboard  http://${HOST}:${PORT}/"
 echo "Drink board http://${HOST}:${PORT}/board"
+echo "Drink order test http://${HOST}:${PORT}/test/drinks"
 PYTHONPATH=. exec "$@"

@@ -35,6 +35,7 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 | `GET /board/tickets` | Ticket-list fragment; HTMX polls every 10s |
 | `DELETE /board/tickets/{id}` | Tap-to-clear: drink is made, ticket drops off |
 | `POST /board/demo-tick` | Dev-only: insert a random demo drink (no Square) |
+| `GET /test/drinks` | Local test only: place drink orders, see the 3 oldest, clear one drink at a time |
 | `GET /loyalty` | Member book: search, segment chips, hometown rollup, dense table |
 | `GET /loyalty.csv` | Same filters as the list, UTF-8 CSV attachment |
 | `GET /loyalty/{id}` | One-member dossier (balance, marketing, points ledger) |
@@ -57,6 +58,18 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 4. Add to Home Screen if you want. Keep the tablet plugged in, brightness up, auto-lock off.
 
 `?minutes=15` is the default window. Newest tickets sit first. Tap a ticket when the drink is done and it drops off. The list refreshes every 10 seconds.
+
+## Drink order test (not the live board)
+
+Local page only. It does not change `/board`, and it does not write `drink_tickets`.
+
+With the app running (`./scripts/run.sh`), open:
+
+http://127.0.0.1:8000/test/drinks
+
+The menu is the same demo drink list the kitchen board already uses (Fruit Tea, Viet Coffee, Milk Tea, Matcha, Biscoff, with the same modifiers). Set quantities and place an order. The barista side shows the **3 oldest** open orders, oldest first. Drinks you have not started stay in a waiting row. Tap a drink to clear that drink. The order leaves the board only when every drink on it is cleared, and the next oldest order slides into the open slot.
+
+Test orders are stored in `test_drink_orders` / `test_drink_lines`. **Clear test orders** wipes those rows only.
 
 ## Loyalty + CSV + hometown
 

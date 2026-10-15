@@ -86,6 +86,40 @@ class DrinkTicket(Base):
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="local")
 
 
+class TestDrinkOrder(Base):
+    """One open order on the drinks-only test counter. Not read by /board."""
+
+    __tablename__ = "test_drink_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ordered_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    ticket_name: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+
+    lines: Mapped[list[TestDrinkLine]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan",
+    )
+
+
+class TestDrinkLine(Base):
+    """One drink on a test order. Clearing the drink deletes this row, not the order."""
+
+    __tablename__ = "test_drink_lines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("test_drink_orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    drink_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    modifiers_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    qty: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    order: Mapped[TestDrinkOrder] = relationship(back_populates="lines")
+
+
 class LoyaltyMember(Base):
     """One Square loyalty account, denormalized for list/export.
 

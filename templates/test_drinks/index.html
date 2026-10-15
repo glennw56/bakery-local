@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Drink order test · Bakery Local</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body class="kds kds-test">
+  <header class="kds-bar">
+    <div class="kds-title">
+      <a href="/">Admin</a>
+      <span class="kds-test-flag">TEST</span>
+      <h1>Drink orders</h1>
+      <span class="kds-window">Drinks only · 3 oldest open orders · tap a drink to clear it · not the live board · America/Chicago</span>
+    </div>
+    <div class="kds-tools">
+      <a class="kds-live-link" href="/board">Live board</a>
+      <button type="button"
+              class="kds-demo"
+              hx-post="/test/drinks/reset"
+              hx-target="#order-board"
+              hx-swap="innerHTML"
+              hx-confirm="Clear every test drink order?">Clear test orders</button>
+    </div>
+  </header>
+
+  <div class="kds-test-stage">
+    <form class="kds-menu"
+          action="/test/drinks/orders"
+          method="post"
+          hx-post="/test/drinks/orders"
+          hx-target="#order-board"
+          hx-swap="innerHTML"
+          hx-disabled-elt="find button"
+          hx-on::after-request="if (event.detail.successful &amp;&amp; (event.detail.xhr.getResponseHeader('HX-Trigger') || '') === 'orderPlaced') this.reset()">
+      <h2>Drink menu</h2>
+      <p class="kds-menu-note">Same drinks as the kitchen board. Set a quantity, then place one order. This counter does not take food.</p>
+      <label class="kds-name-field">
+        Order name
+        <input name="ticket_name" maxlength="80" placeholder="Walk-in" autocomplete="off">
+      </label>
+      {% for item in menu %}
+      <div class="kds-menu-item drink-{{ item.slug }}">
+        <div>
+          <h3>{{ item.drink_name }}</h3>
+          {% if item.modifiers %}
+          <ul class="kds-mods">
+            {% for mod in item.modifiers %}
+            <li>{% if mod.group %}<span class="kds-group">{{ mod.group }}</span> {% endif %}{{ mod.value }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+        <label>
+          Qty
+          <input type="number"
+                 name="qty_{{ item.key }}"
+                 min="0"
+                 max="9"
+                 value="0"
+                 inputmode="numeric"
+                 aria-label="{{ item.drink_name }} quantity">
+        </label>
+      </div>
+      {% endfor %}
+      <button type="submit" class="kds-place">Place drink order</button>
+    </form>
+
+    <section id="order-board"
+             class="kds-board"
+             aria-label="Three oldest open drink orders"
+             hx-get="/test/drinks/board"
+             hx-trigger="every 10s"
+             hx-swap="innerHTML">
+      {% include "test_drinks/_board.html" %}
+    </section>
+  </div>
+</body>
+</html>
