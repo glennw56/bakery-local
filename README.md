@@ -36,11 +36,12 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 | `DELETE /board/tickets/{id}` | Tap-to-clear: drink is made, ticket drops off |
 | `POST /board/demo-tick` | Dev-only: insert a random demo drink (no Square) |
 | `GET /test/drinks` | Local test only: place drink orders, see the 3 oldest, clear one drink at a time |
-| `GET /test/drinks/orders/{id}/ticket` | 58mm ticket HTML (the same page PassPRNT prints) |
-| `GET /test/drinks/print-feed` | Orders waiting to print, oldest first |
-| `POST /test/drinks/orders/{id}/print-claim` | Claim one ticket and return the PassPRNT URL |
-| `POST /test/drinks/orders/{id}/print-done` | Mark that ticket printed |
-| `POST /test/drinks/orders/{id}/print-release` | Put a failed ticket back in the queue |
+| `GET /test/drinks/lines/{id}/ticket` | 58mm HTML for one drink (what PassPRNT prints) |
+| `GET /test/drinks/orders/{id}/ticket` | Laptop preview of that order's drink tickets |
+| `GET /test/drinks/print-feed` | Drinks waiting to print, oldest first |
+| `POST /test/drinks/lines/{id}/print-claim` | Claim one drink and return its PassPRNT URL |
+| `POST /test/drinks/lines/{id}/print-done` | Mark that drink printed |
+| `POST /test/drinks/lines/{id}/print-release` | Put a failed drink back in the queue |
 | `GET /loyalty` | Member book: search, segment chips, hometown rollup, dense table |
 | `GET /loyalty.csv` | Same filters as the list, UTF-8 CSV attachment |
 | `GET /loyalty/{id}` | One-member dossier (balance, marketing, points ledger) |
@@ -85,9 +86,11 @@ The drink station tablet prints on the existing Star TSP100IV over Bluetooth. Sq
 3. On the shop laptop, `HOST=0.0.0.0 ./scripts/run.sh`. On the tablet, open `http://<laptop-lan-ip>:8000/test/drinks`.
 4. Turn on **Print on this tablet**. Leave that tab open.
 
-Placing an order on that tablet opens PassPRNT, prints the ticket, and returns to the board. Orders placed from any other device print once on this tablet, oldest first. The same order is not printed twice. The ticket shows the order name and number, the time, each drink in large type with its modifiers, and the drink count.
+Placing an order on that tablet opens PassPRNT once per drink. Each ticket shows the order name and number, the time, that one drink in large type with its modifiers, and `Drink 1 of 3` numbering. PassPRNT cuts after each job (`cut=partial`), then returns to the board, which sends the next drink. A quantity above 1 stays on that drink's ticket as ×N. The board does not add a drink onto an order that is already open; a new line queued later prints by itself and does not reprint the drinks already sent.
 
-PassPRNT is called as `starpassprnt://v1/print/nopreview` with `html` (the ticket), `size=406` (406 dots, the TSP100IV 58mm print width), `cut=partial`, `popup=disable`, and `back` set to this board. `size=2w7` is not used: Star’s table does not list it for the TSP100IV, and an invalid size falls back to 72mm.
+Orders placed from any other device print the same way, one drink at a time, oldest first. Each drink line prints once. A failed return puts only that drink back in the queue.
+
+PassPRNT is called as `starpassprnt://v1/print/nopreview` with `html` (one drink), `size=406` (406 dots, the TSP100IV 58mm print width), `cut=partial`, `popup=disable`, and `back` set to this board. Separate jobs are used because PassPRNT applies `cut` after the whole job, and HTML becomes one raster, so a page break in one document would not cut between drinks. `size=2w7` is not used: Star’s table does not list it for the TSP100IV, and an invalid size falls back to 72mm.
 
 On Cloud Run the container sees plain HTTP from the platform proxy. Uvicorn is started with `--proxy-headers --forwarded-allow-ips='*'` (`scripts/docker-entrypoint.sh` and `scripts/run.sh`) so `X-Forwarded-Proto: https` makes that back URL `https`. The proxy address is not localhost, and the default allow list would ignore the header.
 

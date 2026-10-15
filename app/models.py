@@ -121,18 +121,20 @@ class TestDrinkLine(Base):
 
 
 class TestPrintJob(Base):
-    """One PassPRNT ticket for a test drink order.
+    """One PassPRNT ticket for one drink line.
 
-    The ticket JSON is a snapshot from the moment the order was placed, so
-    clearing drinks on the board does not change what the tablet prints.
-    order_id is not a foreign key: the order can leave the board before the
-    tablet has printed.
+    The ticket JSON is a snapshot from the moment that line was queued, so
+    clearing the drink on the board does not change what the tablet prints.
+    line_id is not a foreign key: the drink can leave the board before the
+    tablet has printed. One order has one job per line, and a failed print
+    returns only that line to the queue.
     """
 
     __tablename__ = "test_print_jobs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    order_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    line_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    order_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     ticket_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

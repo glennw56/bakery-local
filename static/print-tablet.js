@@ -1,6 +1,7 @@
 /* Barista tablet: Star PassPRNT on the paired TSP100IV (58mm, Bluetooth).
-   The checkbox stays on this browser only. Orders from other devices print
-   once, oldest first, and a failed return can try again. */
+   One drink is one ticket. The checkbox stays on this browser only.
+   Drinks from any device print once, oldest first. A failed return
+   puts just that drink back; the others in the order keep going. */
 (function () {
   var KEY = "sunshine-print-tablet";
   var SINCE = "sunshine-print-since";
@@ -52,9 +53,9 @@
     window.location.href = url;
   }
 
-  function claim(orderId) {
-    if (leaving) return;
-    fetch("/test/drinks/orders/" + orderId + "/print-claim", { method: "POST" })
+  function claim(lineId) {
+    if (leaving || !lineId) return;
+    fetch("/test/drinks/lines/" + lineId + "/print-claim", { method: "POST" })
       .then(function (response) {
         if (!response.ok) return null;
         return response.json();
@@ -65,16 +66,17 @@
       .catch(function () {});
   }
 
-  function pullNext() {
+  function pullNext(skipId) {
     if (!enabled() || leaving) return;
     fetch("/test/drinks/print-feed")
       .then(function (response) { return response.json(); })
       .then(function (data) {
-        var orders = (data && data.orders) || [];
+        var drinks = (data && data.drinks) || [];
         var cutoff = sinceMs();
-        for (var i = 0; i < orders.length; i++) {
-          if (Number(orders[i].created_ms) > cutoff) {
-            claim(orders[i].id);
+        for (var i = 0; i < drinks.length; i++) {
+          if (skipId && String(drinks[i].id) === String(skipId)) continue;
+          if (Number(drinks[i].created_ms) > cutoff) {
+            claim(drinks[i].id);
             return;
           }
         }
@@ -84,17 +86,18 @@
 
   function settleReturn() {
     var params = new URLSearchParams(window.location.search);
-    var orderId = params.get("print_order");
+    var lineId = params.get("print_line");
     var code = params.get("passprnt_code");
-    if (!orderId || code === null) {
+    if (!lineId || code === null) {
       pullNext();
       return;
     }
     var path = code === "0" ? "print-done" : "print-release";
-    fetch("/test/drinks/orders/" + orderId + "/" + path, { method: "POST" })
+    fetch("/test/drinks/lines/" + lineId + "/" + path, { method: "POST" })
       .finally(function () {
         window.history.replaceState(null, "", "/test/drinks");
-        pullNext();
+        /* A failed drink stays queued. Skip it once so the next drink still prints. */
+        pullNext(code === "0" ? null : lineId);
       });
   }
 
@@ -102,8 +105,9 @@
     var xhr = event.detail && event.detail.xhr;
     if (!xhr || !event.detail.successful) return;
     if ((xhr.getResponseHeader("HX-Trigger") || "") !== "orderPlaced") return;
-    var id = xhr.getResponseHeader("X-Print-Order");
-    if (enabled() && id) claim(id);
+    var lines = xhr.getResponseHeader("X-Print-Lines") || "";
+    var first = lines.split(",")[0];
+    if (enabled() && first) claim(first);
   });
 
   settleReturn();

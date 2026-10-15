@@ -32,9 +32,10 @@ from sqlalchemy.orm import Session
 from app.db import get_db, init_db
 from app.passprnt import (
     claim_job,
-    enqueue_print_job,
+    enqueue_print_jobs,
     finish_job,
-    job_for_order,
+    job_for_line,
+    jobs_for_order,
     load_ticket,
     passprnt_url,
     pending_jobs,
@@ -547,75 +548,99 @@ def test_drinks_place(
         ticket_name=normalize_ticket_name(form.get("ticket_name", "")),
         lines=lines,
     )
-    enqueue_print_job(db, order, chicago_clock(order.ordered_at))
+    jobs = enqueue_print_jobs(db, order, chicago_clock(order.ordered_at))
     if _is_htmx(request):
         response = _test_board_response(request, db)
         response.headers["HX-Trigger"] = "orderPlaced"
         response.headers["X-Print-Order"] = str(order.id)
+        response.headers["X-Print-Lines"] = ",".join(str(job.line_id) for job in jobs)
         return response
     return RedirectResponse("/test/drinks", status_code=303)
 
 
-def _print_back_url(request: Request, order_id: int) -> str:
+def _print_back_url(request: Request, line_id: int) -> str:
     base = str(request.base_url).rstrip("/")
-    return f"{base}/test/drinks?print_order={order_id}"
+    return f"{base}/test/drinks?print_line={line_id}"
 
 
 def _passprnt_for_job(request: Request, job) -> str:
-    return passprnt_url(render_ticket_html(load_ticket(job)), _print_back_url(request, job.order_id))
+    return passprnt_url(render_ticket_html(load_ticket(job)), _print_back_url(request, job.line_id))
+
+
+def _print_row(job) -> dict:
+    ticket = load_ticket(job)
+    return {
+        "id": job.line_id,
+        "order_id": job.order_id,
+        "ticket_name": ticket.get("ticket_name") or "",
+        "created_ms": int(job.created_at.replace(tzinfo=timezone.utc).timestamp() * 1000),
+    }
+
+
+@app.get("/test/drinks/lines/{line_id}/ticket", response_class=HTMLResponse)
+def test_drinks_line_ticket(line_id: int, db: Session = Depends(get_db)):
+    """The one-drink HTML PassPRNT prints for this line."""
+    job = job_for_line(db, line_id)
+    if job is None:
+        return Response("No ticket for that drink.", status_code=404)
+    return HTMLResponse(render_ticket_html(load_ticket(job)))
 
 
 @app.get("/test/drinks/orders/{order_id}/ticket", response_class=HTMLResponse)
 def test_drinks_ticket(order_id: int, db: Session = Depends(get_db)):
-    """The same HTML PassPRNT prints. Useful as a preview on a laptop."""
-    job = job_for_order(db, order_id)
-    if job is None:
+    """Laptop preview of every drink ticket on an order, one slip after another."""
+    import html as html_lib
+
+    jobs = jobs_for_order(db, order_id)
+    if not jobs:
         return Response("No ticket for that order.", status_code=404)
-    return HTMLResponse(render_ticket_html(load_ticket(job)))
+    frames = []
+    for job in jobs:
+        doc = html_lib.escape(render_ticket_html(load_ticket(job)), quote=True)
+        frames.append(
+            f'<iframe sandbox srcdoc="{doc}" '
+            'style="width:58mm;height:78mm;border:0;background:#fff;display:block;margin:12px auto;"></iframe>'
+        )
+    return HTMLResponse(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Drink tickets</title>"
+        "<style>body{margin:0;background:#111;}</style></head>"
+        f"<body>{''.join(frames)}</body></html>"
+    )
 
 
 @app.get("/test/drinks/print-feed")
 def test_drinks_print_feed(db: Session = Depends(get_db)):
-    """Orders the barista tablet has not printed yet, oldest first."""
-    jobs = pending_jobs(db)
-    return {
-        "orders": [
-            {
-                "id": job.order_id,
-                "ticket_name": load_ticket(job).get("ticket_name") or "",
-                "created_ms": int(job.created_at.replace(tzinfo=timezone.utc).timestamp() * 1000),
-            }
-            for job in jobs
-        ]
-    }
+    """Drink lines the barista tablet has not printed yet, oldest first."""
+    return {"drinks": [_print_row(job) for job in pending_jobs(db)]}
 
 
-@app.post("/test/drinks/orders/{order_id}/print-claim")
-def test_drinks_print_claim(order_id: int, request: Request, db: Session = Depends(get_db)):
-    """One tablet claims the ticket. A second claim does not print it again."""
-    job = claim_job(db, order_id)
+@app.post("/test/drinks/lines/{line_id}/print-claim")
+def test_drinks_print_claim(line_id: int, request: Request, db: Session = Depends(get_db)):
+    """One tablet claims this drink. A second claim does not print it again."""
+    job = claim_job(db, line_id)
     if job is None:
         return JSONResponse({"error": "already taken"}, status_code=409)
     return {
+        "line_id": job.line_id,
         "order_id": job.order_id,
         "passprnt": _passprnt_for_job(request, job),
     }
 
 
-@app.post("/test/drinks/orders/{order_id}/print-done")
-def test_drinks_print_done(order_id: int, db: Session = Depends(get_db)):
-    job = finish_job(db, order_id)
+@app.post("/test/drinks/lines/{line_id}/print-done")
+def test_drinks_print_done(line_id: int, db: Session = Depends(get_db)):
+    job = finish_job(db, line_id)
     if job is None:
-        return JSONResponse({"error": "unknown order"}, status_code=404)
-    return {"order_id": job.order_id, "status": job.status}
+        return JSONResponse({"error": "unknown drink"}, status_code=404)
+    return {"line_id": job.line_id, "status": job.status}
 
 
-@app.post("/test/drinks/orders/{order_id}/print-release")
-def test_drinks_print_release(order_id: int, db: Session = Depends(get_db)):
-    job = release_job(db, order_id)
+@app.post("/test/drinks/lines/{line_id}/print-release")
+def test_drinks_print_release(line_id: int, db: Session = Depends(get_db)):
+    job = release_job(db, line_id)
     if job is None:
-        return JSONResponse({"error": "unknown order"}, status_code=404)
-    return {"order_id": job.order_id, "status": job.status}
+        return JSONResponse({"error": "unknown drink"}, status_code=404)
+    return {"line_id": job.line_id, "status": job.status}
 
 
 @app.delete("/test/drinks/lines/{line_id}", response_class=HTMLResponse)

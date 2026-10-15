@@ -324,78 +324,129 @@ def test_queue_fifo_three_oldest_partial_clear_and_slide_in() -> None:
     assert _waiting(slid.text) == ["Ned", "Cal"]
 
 
-def test_passprnt_ticket_is_claimed_once_and_keeps_its_snapshot() -> None:
-    """Placing an order queues one 58mm PassPRNT ticket. A second claim does not print it again."""
-    from urllib.parse import parse_qs, unquote, urlparse
+def _passprnt_query(url: str) -> dict:
+    from urllib.parse import parse_qs, urlparse
 
-    _reset_drink_orders()
-    placed = _place_drink_order("Table 4", **{"0": 1, "1": 1, "2": 1})
-    assert placed.headers.get("X-Print-Order")
-    order_id = placed.headers["X-Print-Order"]
-
-    feed = client.get("/test/drinks/print-feed")
-    assert feed.status_code == 200
-    assert [row["id"] for row in feed.json()["orders"]] == [int(order_id)]
-
-    claim = client.post(f"/test/drinks/orders/{order_id}/print-claim")
-    assert claim.status_code == 200
-    url = claim.json()["passprnt"]
     parsed = urlparse(url)
     assert parsed.scheme == "starpassprnt"
     assert parsed.netloc == "v1"
     assert parsed.path == "/print/nopreview"
-    query = parse_qs(parsed.query)
-    assert query["size"] == ["406"]
-    assert query["cut"] == ["partial"]
-    assert query["popup"] == ["disable"]
-    assert "2w7" not in url
-    assert query["back"][0].endswith(f"/test/drinks?print_order={order_id}")
-    ticket_html = query["html"][0]
-    assert "Table 4" in ticket_html
-    assert f"Order {order_id}" in ticket_html
-    assert "Fruit Tea" in ticket_html
-    assert "Strawberry" in ticket_html
-    assert "Viet Coffee" in ticket_html
-    assert "Oat milk" in ticket_html
-    assert "Milk Tea" in ticket_html
-    assert "Taro" in ticket_html
-    assert "3 drinks" in ticket_html
-    assert "50.8mm" in ticket_html
-    assert len(url) < 8000
+    return parse_qs(parsed.query)
 
-    again = client.post(f"/test/drinks/orders/{order_id}/print-claim")
-    assert again.status_code == 409
-    quiet = client.get("/test/drinks/print-feed")
-    assert quiet.json()["orders"] == []
+
+def test_passprnt_prints_one_ticket_per_drink() -> None:
+    """Three drinks make three tickets. A failed return re-queues only that drink."""
+    _reset_drink_orders()
+    placed = _place_drink_order("Table 4", **{"0": 1, "1": 1, "2": 1})
+    assert placed.headers.get("X-Print-Order")
+    order_id = placed.headers["X-Print-Order"]
+    line_ids = [int(part) for part in placed.headers["X-Print-Lines"].split(",")]
+    assert len(line_ids) == 3
+
+    feed = client.get("/test/drinks/print-feed")
+    assert feed.status_code == 200
+    assert [row["id"] for row in feed.json()["drinks"]] == line_ids
+    assert {row["order_id"] for row in feed.json()["drinks"]} == {int(order_id)}
+
+    expected = [
+        ("Drink 1 of 3", "Fruit Tea", "Strawberry", ("Viet Coffee", "Milk Tea", "Taro")),
+        ("Drink 2 of 3", "Viet Coffee", "Oat milk", ("Fruit Tea", "Milk Tea", "Strawberry Bursting")),
+        ("Drink 3 of 3", "Milk Tea", "Taro", ("Fruit Tea", "Viet Coffee", "Strawberry Bursting")),
+    ]
+    printed = []
+    for line_id, (number, drink, modifier, absent) in zip(line_ids, expected):
+        claim = client.post(f"/test/drinks/lines/{line_id}/print-claim")
+        assert claim.status_code == 200
+        query = _passprnt_query(claim.json()["passprnt"])
+        assert query["size"] == ["406"]
+        assert query["cut"] == ["partial"]
+        assert query["popup"] == ["disable"]
+        assert "2w7" not in claim.json()["passprnt"]
+        assert query["back"][0].endswith(f"/test/drinks?print_line={line_id}")
+        ticket_html = query["html"][0]
+        assert "Table 4" in ticket_html
+        assert f"Order {order_id}" in ticket_html
+        assert number in ticket_html
+        assert drink in ticket_html
+        assert modifier in ticket_html
+        for other in absent:
+            assert other not in ticket_html
+        assert "3 drinks" not in ticket_html
+        assert "50.8mm" in ticket_html
+        assert len(claim.json()["passprnt"]) < 8000
+        printed.append(ticket_html)
+        again = client.post(f"/test/drinks/lines/{line_id}/print-claim")
+        assert again.status_code == 409
+
+    assert client.get("/test/drinks/print-feed").json()["drinks"] == []
 
     # Clearing a drink on the board does not change the ticket that will print.
     import re
 
-    line = re.search(r'hx-delete="(/test/drinks/lines/\d+)"', placed.text)
+    fruit_id, coffee_id, tea_id = line_ids
+    line = re.search(rf'hx-delete="(/test/drinks/lines/{fruit_id})"', placed.text)
     assert line
     client.delete(line.group(1), headers={"HX-Request": "true"})
-    preview = client.get(f"/test/drinks/orders/{order_id}/ticket")
+    preview = client.get(f"/test/drinks/lines/{fruit_id}/ticket")
     assert preview.status_code == 200
-    assert "Fruit Tea" in preview.text
-    assert "Viet Coffee" in preview.text
-    assert "Milk Tea" in preview.text
-    assert unquote(query["html"][0]) == preview.text or query["html"][0] == preview.text
+    assert preview.text == printed[0]
+    assert "Viet Coffee" not in preview.text
 
-    failed = client.post(f"/test/drinks/orders/{order_id}/print-release")
-    assert failed.json()["status"] == "pending"
-    assert client.get("/test/drinks/print-feed").json()["orders"][0]["id"] == int(order_id)
+    # Releasing one drink leaves the others claimed.
+    released = client.post(f"/test/drinks/lines/{tea_id}/print-release")
+    assert released.json()["status"] == "pending"
+    pending = [row["id"] for row in client.get("/test/drinks/print-feed").json()["drinks"]]
+    assert pending == [tea_id]
 
-    client.post(f"/test/drinks/orders/{order_id}/print-claim")
-    done = client.post(f"/test/drinks/orders/{order_id}/print-done")
-    assert done.json()["status"] == "printed"
-    assert client.get("/test/drinks/print-feed").json()["orders"] == []
-    # A finished ticket is not printed again, even if PassPRNT returns an error later.
-    client.post(f"/test/drinks/orders/{order_id}/print-release")
-    assert client.get("/test/drinks/print-feed").json()["orders"] == []
+    client.post(f"/test/drinks/lines/{coffee_id}/print-done")
+    client.post(f"/test/drinks/lines/{fruit_id}/print-done")
+    client.post(f"/test/drinks/lines/{tea_id}/print-claim")
+    client.post(f"/test/drinks/lines/{tea_id}/print-done")
+    assert client.get("/test/drinks/print-feed").json()["drinks"] == []
+    # A finished drink is not printed again, even if PassPRNT returns an error later.
+    client.post(f"/test/drinks/lines/{coffee_id}/print-release")
+    assert client.get("/test/drinks/print-feed").json()["drinks"] == []
 
     live = client.get("/board")
     assert "starpassprnt" not in live.text
     assert "Table 4" not in live.text
+
+
+def test_new_drink_line_prints_without_repeating_the_order() -> None:
+    """The board cannot add a drink to an open order. Queuing again prints only a new line."""
+    from app.db import SessionLocal
+    from app.models import TestDrinkLine, TestDrinkOrder
+    from app.passprnt import enqueue_print_jobs
+
+    _reset_drink_orders()
+    placed = _place_drink_order("Window", **{"0": 1})
+    first_id = int(placed.headers["X-Print-Lines"])
+    client.post(f"/test/drinks/lines/{first_id}/print-claim")
+    client.post(f"/test/drinks/lines/{first_id}/print-done")
+
+    with SessionLocal() as db:
+        order = db.get(TestDrinkOrder, int(placed.headers["X-Print-Order"]))
+        order.lines.append(
+            TestDrinkLine(
+                drink_name="Matcha",
+                modifiers_json='[{"group":"Matcha","value":"Strawberry Matcha"}]',
+                qty=1,
+            )
+        )
+        db.commit()
+        db.refresh(order)
+        created = enqueue_print_jobs(db, order, "2:07 PM")
+        assert len(created) == 1
+        new_id = created[0].line_id
+
+    feed = client.get("/test/drinks/print-feed").json()["drinks"]
+    assert [row["id"] for row in feed] == [new_id]
+    claim = client.post(f"/test/drinks/lines/{new_id}/print-claim")
+    html = _passprnt_query(claim.json()["passprnt"])["html"][0]
+    assert "Matcha" in html
+    assert "Drink 2 of 2" in html
+    assert "Fruit Tea" not in html
+    assert "Strawberry Matcha" in html
 
 
 def test_passprnt_back_url_is_https_behind_the_cloud_run_proxy() -> None:
@@ -462,23 +513,23 @@ def test_passprnt_back_url_is_https_behind_the_cloud_run_proxy() -> None:
                 method="POST",
             )
             with urllib.request.urlopen(req) as resp:
-                return resp.headers["X-Print-Order"]
+                return resp.headers["X-Print-Lines"].split(",")[0]
 
         public = "sunshine-drink-board-test.a.run.app"
         https_id = place("Proxy")
         claimed = httpx.post(
-            f"{base}/test/drinks/orders/{https_id}/print-claim",
+            f"{base}/test/drinks/lines/{https_id}/print-claim",
             headers={"X-Forwarded-Proto": "https", "Host": public},
         )
         assert claimed.status_code == 200
         back = claimed.json()["passprnt"].split("back=")[1]
-        assert unquote(back).startswith(f"https://{public}/test/drinks?print_order={https_id}")
+        assert unquote(back).startswith(f"https://{public}/test/drinks?print_line={https_id}")
 
         local_id = place("Local")
-        plain = httpx.post(f"{base}/test/drinks/orders/{local_id}/print-claim")
+        plain = httpx.post(f"{base}/test/drinks/lines/{local_id}/print-claim")
         assert plain.status_code == 200
         local_back = unquote(plain.json()["passprnt"].split("back=")[1])
-        assert local_back.startswith(f"http://127.0.0.1:{port}/test/drinks?print_order={local_id}")
+        assert local_back.startswith(f"http://127.0.0.1:{port}/test/drinks?print_line={local_id}")
     finally:
         proc.terminate()
         try:

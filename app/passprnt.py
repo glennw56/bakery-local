@@ -1,8 +1,11 @@
 """58mm drink tickets for Star PassPRNT on the TSP100IV.
 
 PassPRNT is Star's free iOS/Android app. The board opens
-starpassprnt://v1/print/nopreview with the ticket HTML, then PassPRNT
-returns to the back URL. Nothing here talks to Square.
+starpassprnt://v1/print/nopreview with one drink's HTML, then PassPRNT
+returns to the back URL and the next drink prints. Each job cuts once
+(cut=partial). PassPRNT's cut applies after the job, and HTML is one
+raster, so separate jobs are what actually cuts between drinks.
+Nothing here talks to Square.
 
 Paper: TSP100IV with the 58mm guide prints 50.8mm (406 dots at 203 dpi).
 Star's size code 2w7 is 51mm only on the TSP100IV SK. On a TSP100IV it is
@@ -31,66 +34,59 @@ PASS_POPUP = "disable"
 PASS_SCHEME = "starpassprnt://v1/print/nopreview"
 
 
-def ticket_snapshot(order, clock: str) -> dict:
-    """Freeze the drinks on an order. Later clears do not change this."""
-    lines = []
-    drink_count = 0
-    for line in sorted(order.lines, key=lambda item: item.id):
-        qty = int(line.qty)
-        drink_count += qty
-        try:
-            raw_mods = json.loads(line.modifiers_json or "[]")
-        except json.JSONDecodeError:
-            raw_mods = []
-        modifiers = []
-        if isinstance(raw_mods, list):
-            for mod in raw_mods:
-                if not isinstance(mod, dict):
-                    continue
-                value = str(mod.get("value") or "").strip()
-                if not value:
-                    continue
-                modifiers.append(
-                    {"group": str(mod.get("group") or "").strip(), "value": value}
-                )
-        lines.append(
-            {
-                "drink_name": line.drink_name,
-                "qty": qty,
-                "modifiers": modifiers,
-            }
-        )
+def _modifiers(line) -> list[dict]:
+    try:
+        raw_mods = json.loads(line.modifiers_json or "[]")
+    except json.JSONDecodeError:
+        raw_mods = []
+    modifiers = []
+    if not isinstance(raw_mods, list):
+        return modifiers
+    for mod in raw_mods:
+        if not isinstance(mod, dict):
+            continue
+        value = str(mod.get("value") or "").strip()
+        if not value:
+            continue
+        modifiers.append({"group": str(mod.get("group") or "").strip(), "value": value})
+    return modifiers
+
+
+def ticket_for_line(order, line, clock: str, index: int, total: int) -> dict:
+    """Freeze one drink. Later clears do not change this ticket."""
     name = (order.ticket_name or "").strip() or "Walk-in"
     return {
         "order_id": int(order.id),
+        "line_id": int(line.id),
         "ticket_name": name,
         "clock": clock,
-        "drink_count": drink_count,
-        "lines": lines,
+        "drink_index": int(index),
+        "drink_total": int(total),
+        "drink_name": line.drink_name,
+        "qty": int(line.qty),
+        "modifiers": _modifiers(line),
     }
 
 
 def render_ticket_html(ticket: dict) -> str:
-    """HTML PassPRNT turns into the 58mm raster. CSS is inline."""
-    count = int(ticket.get("drink_count") or 0)
-    count_label = "1 drink" if count == 1 else f"{count} drinks"
-    drink_blocks = []
-    for line in ticket.get("lines") or []:
-        qty = int(line.get("qty") or 1)
-        qty_html = f' <span class="qty">×{qty}</span>' if qty > 1 else ""
-        mods = []
-        for mod in line.get("modifiers") or []:
-            group = mod.get("group") or ""
-            value = mod.get("value") or ""
-            label = f"{group} {value}".strip() if group else value
-            mods.append(f'<p class="mod">{html.escape(label)}</p>')
-        drink_blocks.append(
-            "<section class=\"drink\">"
-            f'<h2>{html.escape(str(line.get("drink_name") or ""))}{qty_html}</h2>'
-            f'{"".join(mods)}'
-            "</section>"
-        )
-    body = "\n".join(drink_blocks)
+    """HTML PassPRNT turns into one 58mm drink. CSS is inline."""
+    index = int(ticket.get("drink_index") or 1)
+    total = int(ticket.get("drink_total") or 1)
+    count_label = f"Drink {index} of {total}"
+    qty = int(ticket.get("qty") or 1)
+    qty_html = f' <span class="qty">×{qty}</span>' if qty > 1 else ""
+    mods = []
+    for mod in ticket.get("modifiers") or []:
+        group = mod.get("group") or ""
+        value = mod.get("value") or ""
+        label = f"{group} {value}".strip() if group else value
+        mods.append(f'<p class="mod">{html.escape(label)}</p>')
+    body = (
+        "<section class=\"drink\">"
+        f'<h2>{html.escape(str(ticket.get("drink_name") or ""))}{qty_html}</h2>'
+        f'{"".join(mods)}'
+        "</section>"
+    )
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -176,18 +172,38 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def enqueue_print_job(db: Session, order, clock: str) -> TestPrintJob:
-    ticket = ticket_snapshot(order, clock)
-    job = TestPrintJob(
-        order_id=int(order.id),
-        status="pending",
-        ticket_json=json.dumps(ticket),
-        created_at=_now(),
+def enqueue_print_jobs(db: Session, order, clock: str) -> list[TestPrintJob]:
+    """Queue one ticket per drink line that does not already have one.
+
+    Calling this again after a new line is added prints only that line.
+    Lines already queued, claimed, or printed are left alone.
+    """
+    lines = sorted(order.lines, key=lambda item: item.id)
+    already = set(
+        db.scalars(
+            select(TestPrintJob.line_id).where(TestPrintJob.order_id == int(order.id))
+        ).all()
     )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-    return job
+    total = len(lines)
+    created: list[TestPrintJob] = []
+    now = _now()
+    for index, line in enumerate(lines, start=1):
+        if int(line.id) in already:
+            continue
+        job = TestPrintJob(
+            line_id=int(line.id),
+            order_id=int(order.id),
+            status="pending",
+            ticket_json=json.dumps(ticket_for_line(order, line, clock, index, total)),
+            created_at=now,
+        )
+        db.add(job)
+        created.append(job)
+    if created:
+        db.commit()
+        for job in created:
+            db.refresh(job)
+    return created
 
 
 def load_ticket(job: TestPrintJob) -> dict:
@@ -200,8 +216,18 @@ def load_ticket(job: TestPrintJob) -> dict:
     return data
 
 
-def job_for_order(db: Session, order_id: int) -> TestPrintJob | None:
-    return db.scalar(select(TestPrintJob).where(TestPrintJob.order_id == order_id))
+def job_for_line(db: Session, line_id: int) -> TestPrintJob | None:
+    return db.scalar(select(TestPrintJob).where(TestPrintJob.line_id == line_id))
+
+
+def jobs_for_order(db: Session, order_id: int) -> list[TestPrintJob]:
+    return list(
+        db.scalars(
+            select(TestPrintJob)
+            .where(TestPrintJob.order_id == order_id)
+            .order_by(TestPrintJob.id.asc())
+        ).all()
+    )
 
 
 def pending_jobs(db: Session) -> list[TestPrintJob]:
@@ -214,9 +240,9 @@ def pending_jobs(db: Session) -> list[TestPrintJob]:
     )
 
 
-def claim_job(db: Session, order_id: int) -> TestPrintJob | None:
-    """Mark one pending ticket claimed. None if it was already taken."""
-    job = job_for_order(db, order_id)
+def claim_job(db: Session, line_id: int) -> TestPrintJob | None:
+    """Mark one pending drink claimed. None if that line was already taken."""
+    job = job_for_line(db, line_id)
     if job is None or job.status != "pending":
         return None
     job.status = "claimed"
@@ -226,8 +252,8 @@ def claim_job(db: Session, order_id: int) -> TestPrintJob | None:
     return job
 
 
-def finish_job(db: Session, order_id: int) -> TestPrintJob | None:
-    job = job_for_order(db, order_id)
+def finish_job(db: Session, line_id: int) -> TestPrintJob | None:
+    job = job_for_line(db, line_id)
     if job is None:
         return None
     job.status = "printed"
@@ -237,9 +263,9 @@ def finish_job(db: Session, order_id: int) -> TestPrintJob | None:
     return job
 
 
-def release_job(db: Session, order_id: int) -> TestPrintJob | None:
-    """A failed PassPRNT return can print again. A finished ticket stays finished."""
-    job = job_for_order(db, order_id)
+def release_job(db: Session, line_id: int) -> TestPrintJob | None:
+    """A failed PassPRNT return can print this drink again. A finished drink stays finished."""
+    job = job_for_line(db, line_id)
     if job is None or job.status == "printed":
         return job
     job.status = "pending"
