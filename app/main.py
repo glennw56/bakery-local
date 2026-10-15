@@ -507,6 +507,29 @@ def _with_test_print(request: Request, context: dict) -> dict:
     return context
 
 
+def _pending_print_links(request: Request, db: Session) -> list[dict]:
+    """Real PassPRNT anchors for drinks still waiting. Oldest first."""
+    links = []
+    for job in pending_jobs(db):
+        row = _print_row(job)
+        links.append(
+            {
+                "line_id": row["id"],
+                "label": row["drink_name"] or row["ticket_name"] or "Drink",
+                "created_ms": row["created_ms"],
+                "passprnt": _passprnt_for_job(request, job),
+            }
+        )
+    return links
+
+
+def _print_page_context(request: Request, db: Session, context: dict) -> dict:
+    context = _with_test_print(request, context)
+    context["print_links"] = _pending_print_links(request, db)
+    context["debug"] = request.query_params.get("debug") == "1"
+    return context
+
+
 def _test_board_response(request: Request, db: Session, error: str = ""):
     return templates.TemplateResponse(
         request,
@@ -521,7 +544,7 @@ def test_drinks_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "test_drinks/index.html",
-        _with_test_print(request, test_board_context(db)),
+        _print_page_context(request, db, test_board_context(db)),
     )
 
 
@@ -546,7 +569,7 @@ def test_drinks_place(
         return templates.TemplateResponse(
             request,
             "test_drinks/index.html",
-            _with_test_print(request, test_board_context(db, error=exc.message)),
+            _print_page_context(request, db, test_board_context(db, error=exc.message)),
             status_code=400,
         )
     order = create_test_order(
@@ -616,12 +639,29 @@ def test_drinks_ticket(order_id: int, db: Session = Depends(get_db)):
     )
 
 
+@app.get("/test/drinks/print-links", response_class=HTMLResponse)
+def test_drinks_print_links(
+    request: Request,
+    debug: str = Query(""),
+    db: Session = Depends(get_db),
+):
+    """PassPRNT anchors as HTML. The page inserts a link once and does not rewrite it."""
+    return templates.TemplateResponse(
+        request,
+        "test_drinks/_print_links.html",
+        {
+            "print_links": _pending_print_links(request, db),
+            "debug": debug == "1" or request.query_params.get("debug") == "1",
+        },
+    )
+
+
 @app.get("/test/drinks/print-feed")
 def test_drinks_print_feed(request: Request, db: Session = Depends(get_db)):
     """Drink lines waiting to print, oldest first, each with its PassPRNT link.
 
-    The link is built here so the page can put it on a real <a href> before
-    the barista taps. The tap claims the line and does not wait on that claim.
+    The link is built with the same function as Test print. The page copies
+    it onto an <a href> from this HTML and does not change that anchor later.
     """
     drinks = []
     for job in pending_jobs(db):

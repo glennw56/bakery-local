@@ -1,0 +1,9 @@
+{% for link in print_links %}
+<div class="kds-print-slot" data-slot="{{ link.line_id }}" data-created="{{ link.created_ms }}" hidden>
+  <a class="kds-print-next" href="{{ link.passprnt }}" ping="/test/drinks/lines/{{ link.line_id }}/print-claim">Print · {{ link.label }}</a>
+  {% if debug %}
+  <pre class="kds-print-debug">{{ link.passprnt }}
+{{ link.passprnt|length }} bytes</pre>
+  {% endif %}
+</div>
+{% endfor %}

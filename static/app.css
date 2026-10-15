@@ -360,8 +360,26 @@ body.kds {
   border-bottom: 3px solid #f5c518;
 }
 .kds-print-banner[hidden],
+.kds-print-slot[hidden],
 .kds-print-next[hidden],
 .kds-print-fallback[hidden] { display: none !important; }
+.kds-print-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+.kds-print-debug {
+  margin: 0;
+  max-width: 100%;
+  color: #ffe38a;
+  background: #111;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 0.4rem 0.5rem;
+}
 .kds-print-status {
   margin: 0;
   color: #ffe38a;

@@ -349,12 +349,12 @@ def test_passprnt_prints_one_ticket_per_drink() -> None:
     assert {row["order_id"] for row in feed.json()["drinks"]} == {int(order_id)}
 
     expected = [
-        ("Drink 1 of 3", "Fruit Tea", "Strawberry", ("Viet Coffee", "Milk Tea", "Taro")),
-        ("Drink 2 of 3", "Viet Coffee", "Oat milk", ("Fruit Tea", "Milk Tea", "Strawberry Bursting")),
-        ("Drink 3 of 3", "Milk Tea", "Taro", ("Fruit Tea", "Viet Coffee", "Strawberry Bursting")),
+        ("Fruit Tea", "Strawberry", ("Viet Coffee", "Milk Tea", "Taro")),
+        ("Viet Coffee", "Oat milk", ("Fruit Tea", "Milk Tea", "Strawberry Bursting")),
+        ("Milk Tea", "Taro", ("Fruit Tea", "Viet Coffee", "Strawberry Bursting")),
     ]
     printed = []
-    for line_id, (number, drink, modifier, absent) in zip(line_ids, expected):
+    for line_id, (drink, modifier, absent) in zip(line_ids, expected):
         claim = client.post(f"/test/drinks/lines/{line_id}/print-claim")
         assert claim.status_code == 200
         query = _passprnt_query(claim.json()["passprnt"])
@@ -365,15 +365,16 @@ def test_passprnt_prints_one_ticket_per_drink() -> None:
         assert query["back"][0].endswith(f"/test/drinks?print_line={line_id}")
         ticket_html = query["html"][0]
         assert "Table 4" in ticket_html
-        assert f"Order {order_id}" in ticket_html
-        assert number in ticket_html
         assert drink in ticket_html
         assert modifier in ticket_html
         for other in absent:
             assert other not in ticket_html
+        assert "Drink " not in ticket_html
+        assert "$" not in ticket_html
+        assert "total" not in ticket_html.lower()
         assert "3 drinks" not in ticket_html
         assert "50.8mm" in ticket_html
-        assert len(claim.json()["passprnt"]) < 8000
+        assert len(claim.json()["passprnt"]) < 2048
         printed.append(ticket_html)
         again = client.post(f"/test/drinks/lines/{line_id}/print-claim")
         assert again.status_code == 409
@@ -444,7 +445,7 @@ def test_new_drink_line_prints_without_repeating_the_order() -> None:
     claim = client.post(f"/test/drinks/lines/{new_id}/print-claim")
     html = _passprnt_query(claim.json()["passprnt"])["html"][0]
     assert "Matcha" in html
-    assert "Drink 2 of 2" in html
+    assert "Drink " not in html
     assert "Fruit Tea" not in html
     assert "Strawberry Matcha" in html
 
@@ -547,48 +548,85 @@ def _passprnt_parts(url: str) -> tuple[str, list[str]]:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}", keys
 
 
+def _href_after(html: str, marker: str) -> str:
+    start = html.find(marker)
+    assert start >= 0, marker
+    start = html.find('href="', start) + len('href="')
+    return html[start:html.find('"', start)].replace("&amp;", "&")
+
+
 def test_drink_ticket_url_matches_the_working_test_print() -> None:
-    """Order slips use the same short starpassprnt link shape as Test print."""
+    """Order slips use the same short starpassprnt link as Test print."""
     from urllib.parse import parse_qs, unquote
 
-    page = client.get("/test/drinks")
+    page = client.get("/test/drinks?debug=1")
+    assert 'data-print-debug="1"' in page.text
     assert '<a class="kds-test-print" id="test-print" href="starpassprnt://' in page.text
-    assert '<a id="print-next"' in page.text
-    assert "<button" not in page.text.split('id="print-banner"', 1)[1].split("</div>", 1)[0]
-    sample = page.text.split('id="test-print" href="', 1)[1].split('"', 1)[0].replace("&amp;", "&")
+    assert 'id="test-print-debug"' in page.text
+    assert "<button" not in page.text.split('id="print-banner"', 1)[1].split("kds-test-stage", 1)[0]
+    sample = _href_after(page.text, 'id="test-print"')
+    assert f"{len(sample)} bytes" in page.text
 
     _reset_drink_orders()
     placed = _place_drink_order("Table 4", **{"0": 1, "1": 1})
-    line_id = placed.headers["X-Print-Lines"].split(",")[0]
+    line_ids = placed.headers["X-Print-Lines"].split(",")
+    fruit_id, coffee_id = line_ids
     feed = client.get("/test/drinks/print-feed")
-    drink = next(row["passprnt"] for row in feed.json()["drinks"] if row["id"] == int(line_id))
+    drink = next(row["passprnt"] for row in feed.json()["drinks"] if row["id"] == int(fruit_id))
+    sweet = next(row["passprnt"] for row in feed.json()["drinks"] if row["id"] == int(coffee_id))
+
+    links = client.get("/test/drinks/print-links?debug=1")
+    assert links.status_code == 200
+    assert f'ping="/test/drinks/lines/{fruit_id}/print-claim"' in links.text
+    assert _href_after(links.text, f'data-slot="{fruit_id}"') == drink
+    assert f"{len(drink)} bytes" in links.text
+    board = client.get("/test/drinks")
+    assert _href_after(board.text, f'data-slot="{fruit_id}"') == drink
 
     sample_base, sample_keys = _passprnt_parts(sample)
     drink_base, drink_keys = _passprnt_parts(drink)
     assert sample_base == drink_base == "starpassprnt://v1/print/nopreview"
     assert sample_keys == drink_keys == ["html", "size", "cut", "popup", "back"]
+    assert sample.split("html=", 1)[0] == drink.split("html=", 1)[0]
+    assert "&size=406&cut=partial&popup=disable&back=" in sample
+    assert "&size=406&cut=partial&popup=disable&back=" in drink
     assert "%3C" in sample and "%3C" in drink
     assert "<html" not in sample and "<html" not in drink
-    # A real drink is a little longer than the sample, not a different kind of URL.
-    assert len(drink) < 4000
-    assert len(drink) <= len(sample) + 1200
+    assert "#" not in sample and "#" not in drink
+    assert "%23" not in sample and "%23" not in drink
+    assert "+" not in sample.split("?", 1)[1] and "+" not in drink.split("?", 1)[1]
+    # Android drops custom-scheme URLs past about 2KB. Stay with Test print.
+    assert len(sample) < 2048
+    assert len(drink) < 2048
+    assert len(sweet) < 2048
+    assert "%25" in sweet
 
     sample_html = unquote(parse_qs(sample.split("?", 1)[1])["html"][0])
     drink_html = unquote(parse_qs(drink.split("?", 1)[1])["html"][0])
+    assert sample_html.startswith("<!DOCTYPE html><html><head>")
+    assert drink_html.startswith(sample_html.split("<p>", 1)[0])
     for ticket in (sample_html, drink_html):
-        assert "style=" in ticket
+        assert ticket.count("style=") == 1
+        assert "width:50.8mm" in ticket
         assert "<style" not in ticket
         assert "<img" not in ticket
         assert "base64" not in ticket
-        assert "50.8mm" in ticket
+        assert "Drink " not in ticket
+        assert "$" not in ticket
     assert "Test print" in sample_html
+    assert ">Sample</h1>" in sample_html
+    assert "Table 4" in drink_html
     assert "Fruit Tea" in drink_html
-    assert "Drink 1 of 2" in drink_html
+    assert "Flavor Strawberry" in drink_html
     assert "Viet Coffee" not in drink_html
 
     script = client.get("/static/print-tablet.js")
     source = script.text
-    assert "sendBeacon" in source
+    assert "print-links" in source
+    assert "data-slot" in source
+    assert ".href" not in source
+    assert "preventDefault" not in source
+    assert "sendBeacon" not in source
     assert "location.href" not in source
     assert "XMLHttpRequest" not in source
 

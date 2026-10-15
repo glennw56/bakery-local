@@ -1,14 +1,17 @@
 /* Barista tablet: Star PassPRNT on the paired TSP100IV (58mm, Bluetooth).
-   Android Chrome only opens starpassprnt:// from a real link tap.
-   Print links are <a href="starpassprnt://..."> set before the tap.
-   The claim is a beacon and does not block that navigation. */
+   Test print and drink Print links are <a href="starpassprnt://...">
+   rendered by the server. Android Chrome opens that scheme from the
+   anchor tap and drops it when script assigns the address.
+   This file only shows the oldest waiting link. It does not write href,
+   replace a link already on the page, or listen for the tap.
+   The link's ping attribute claims the drink as the browser follows it. */
 (function () {
   var KEY = "sunshine-print-tablet";
   var SINCE = "sunshine-print-since";
   var box = document.getElementById("print-tablet");
   var banner = document.getElementById("print-banner");
   var statusEl = document.getElementById("print-status");
-  var printLink = document.getElementById("print-next");
+  var list = document.getElementById("print-links");
   var testLink = document.getElementById("test-print");
   var statusTimer = 0;
 
@@ -39,9 +42,26 @@
     }
   }
 
+  function debugOn() {
+    return document.body.getAttribute("data-print-debug") === "1";
+  }
+
+  function linksUrl() {
+    return debugOn() ? "/test/drinks/print-links?debug=1" : "/test/drinks/print-links";
+  }
+
+  function visibleSlot() {
+    if (!list) return null;
+    var slots = list.querySelectorAll(".kds-print-slot");
+    for (var i = 0; i < slots.length; i++) {
+      if (!slots[i].hidden) return slots[i];
+    }
+    return null;
+  }
+
   function showBanner() {
     if (!banner) return;
-    var busy = (statusEl && statusEl.textContent) || (printLink && !printLink.hidden);
+    var busy = (statusEl && statusEl.textContent) || visibleSlot();
     banner.hidden = !busy;
   }
 
@@ -59,51 +79,52 @@
     }, 2000);
   }
 
-  function claim(lineId) {
-    if (!lineId) return;
-    var url = "/test/drinks/lines/" + lineId + "/print-claim";
-    var sent = false;
-    try {
-      if (navigator.sendBeacon) sent = navigator.sendBeacon(url);
-    } catch (err) {
-      sent = false;
+  function reveal() {
+    if (!list) return false;
+    var slots = list.querySelectorAll(".kds-print-slot");
+    var cutoff = sinceMs();
+    var shown = false;
+    var ready = false;
+    for (var i = 0; i < slots.length; i++) {
+      var created = Number(slots[i].getAttribute("data-created") || "0");
+      var want = enabled() && !shown && created > cutoff;
+      if (want) {
+        shown = true;
+        ready = true;
+      }
+      if (slots[i].hidden !== !want) slots[i].hidden = !want;
     }
-    if (!sent) {
-      fetch(url, {method: "POST", keepalive: true}).catch(function () {});
-    }
+    showBanner();
+    return ready;
   }
 
-  function refreshNext() {
-    if (!printLink) return Promise.resolve(false);
-    if (!enabled()) {
-      printLink.hidden = true;
-      printLink.removeAttribute("href");
-      showBanner();
-      return Promise.resolve(false);
+  function absorb(html) {
+    if (!list || !html) {
+      reveal();
+      return;
     }
-    return fetch("/test/drinks/print-feed")
-      .then(function (response) { return response.json(); })
-      .then(function (data) {
-        var drinks = (data && data.drinks) || [];
-        var cutoff = sinceMs();
-        for (var i = 0; i < drinks.length; i++) {
-          if (Number(drinks[i].created_ms) > cutoff && drinks[i].passprnt) {
-            printLink.hidden = false;
-            printLink.href = drinks[i].passprnt;
-            printLink.setAttribute("data-line", String(drinks[i].id));
-            var name = drinks[i].drink_name || drinks[i].ticket_name || "";
-            printLink.textContent = name ? "Print · " + name : "Print";
-            showBanner();
-            return true;
-          }
-        }
-        printLink.hidden = true;
-        printLink.removeAttribute("href");
-        printLink.removeAttribute("data-line");
-        showBanner();
-        return false;
-      })
-      .catch(function () { return false; });
+    var wrap = document.createElement("div");
+    wrap.innerHTML = html;
+    var slots = wrap.querySelectorAll(".kds-print-slot");
+    for (var i = 0; i < slots.length; i++) {
+      var id = slots[i].getAttribute("data-slot");
+      if (!id || list.querySelector('[data-slot="' + id + '"]')) continue;
+      list.appendChild(slots[i]);
+    }
+    reveal();
+  }
+
+  function refreshLinks() {
+    return fetch(linksUrl())
+      .then(function (response) { return response.text(); })
+      .then(absorb)
+      .catch(function () { reveal(); });
+  }
+
+  function dropSlot(lineId) {
+    if (!list || !lineId) return;
+    var slot = list.querySelector('[data-slot="' + lineId + '"]');
+    if (slot) slot.remove();
   }
 
   if (box) {
@@ -115,8 +136,8 @@
         } catch (err) {}
       }
       setEnabled(box.checked);
-      refreshNext().then(function (ready) {
-        if (ready) setStatus("Tap Print.");
+      refreshLinks().then(function () {
+        if (reveal()) setStatus("Tap Print.");
       });
     });
   }
@@ -127,24 +148,13 @@
     });
   }
 
-  if (printLink) {
-    printLink.addEventListener("click", function (event) {
-      if (!printLink.getAttribute("href")) {
-        event.preventDefault();
-        return;
-      }
-      claim(printLink.getAttribute("data-line"));
-      noteSending();
-    });
-  }
-
   document.body.addEventListener("htmx:afterRequest", function (event) {
     var xhr = event.detail && event.detail.xhr;
     if (!xhr || !event.detail.successful) return;
     if ((xhr.getResponseHeader("HX-Trigger") || "") !== "orderPlaced") return;
     if (!enabled()) return;
-    refreshNext().then(function (ready) {
-      if (ready) setStatus("Tap Print.");
+    refreshLinks().then(function () {
+      if (reveal()) setStatus("Tap Print.");
     });
   });
 
@@ -152,24 +162,25 @@
     var params = new URLSearchParams(window.location.search);
     if (params.get("print_test") && params.get("passprnt_code") !== null) {
       setStatus(params.get("passprnt_code") === "0" ? "Test print sent." : "Test print did not finish. Tap Test print to try again.");
-      window.history.replaceState(null, "", "/test/drinks");
-      refreshNext();
+      window.history.replaceState(null, "", "/test/drinks" + (debugOn() ? "?debug=1" : ""));
+      refreshLinks();
       return;
     }
     var lineId = params.get("print_line");
     var code = params.get("passprnt_code");
     if (!lineId || code === null) {
-      refreshNext().then(function (ready) {
-        if (ready) setStatus("Tap Print.");
+      refreshLinks().then(function () {
+        if (reveal()) setStatus("Tap Print.");
       });
       return;
     }
     var path = code === "0" ? "print-done" : "print-release";
     fetch("/test/drinks/lines/" + lineId + "/" + path, {method: "POST"})
       .finally(function () {
-        window.history.replaceState(null, "", "/test/drinks");
-        refreshNext().then(function (ready) {
-          if (ready) {
+        if (code === "0") dropSlot(lineId);
+        window.history.replaceState(null, "", "/test/drinks" + (debugOn() ? "?debug=1" : ""));
+        refreshLinks().then(function () {
+          if (reveal()) {
             setStatus(code === "0" ? "Tap Print." : "That drink did not print. Tap Print again.");
           } else {
             setStatus(code === "0" ? "Printed." : "That drink did not print.");
@@ -179,5 +190,5 @@
   }
 
   settleReturn();
-  window.setInterval(refreshNext, 4000);
+  window.setInterval(refreshLinks, 4000);
 })();

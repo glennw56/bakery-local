@@ -69,43 +69,33 @@ def ticket_for_line(order, line, clock: str, index: int, total: int) -> dict:
 
 
 def render_ticket_html(ticket: dict) -> str:
-    """One small 58mm slip. Styles sit on the tags, same shape as Test print.
+    """One short 58mm slip. Test print and real drinks use this same document.
 
-    A style block or an image makes the starpassprnt:// URL long enough that
-    Android Chrome drops it. Test print works because this HTML stays short.
+    The slip is the order name, the drink, and that drink's modifiers.
+    No price, no "Drink 1 of 3" count, no clock, no images. One width on the
+    body keeps the TSP100IV's 50.8mm print area. Anything more makes the
+    starpassprnt:// URL long enough that Android Chrome will not open it.
     """
-    index = int(ticket.get("drink_index") or 1)
-    total = int(ticket.get("drink_total") or 1)
-    count_label = f"Drink {index} of {total}"
+    order_name = html.escape(str(ticket.get("ticket_name") or "Walk-in"))
     qty = int(ticket.get("qty") or 1)
-    name = html.escape(str(ticket.get("drink_name") or ""))
+    drink = html.escape(str(ticket.get("drink_name") or ""))
     if qty > 1:
-        name += f" ×{qty}"
+        drink += f" x{qty}"
     mods = []
     for mod in ticket.get("modifiers") or []:
-        group = mod.get("group") or ""
-        value = mod.get("value") or ""
+        group = str(mod.get("group") or "").strip()
+        value = str(mod.get("value") or "").strip()
         label = f"{group} {value}".strip() if group else value
-        mods.append(
-            f'<p style="margin:0.3mm 0 0;font-size:14px;font-weight:700">{html.escape(label)}</p>'
-        )
+        if label:
+            mods.append(f"<p>{html.escape(label)}</p>")
     return (
         "<!DOCTYPE html><html><head>"
         '<meta charset="utf-8">'
         '<meta name="format-detection" content="telephone=no">'
-        "</head><body style=\"margin:0;width:"
-        f"{PRINT_WIDTH_MM}mm;background:#fff;color:#000;font-family:Arial,sans-serif\">"
-        '<p style="margin:0;font-size:12px;font-weight:700">Order '
-        f'{html.escape(str(ticket.get("order_id") or ""))}</p>'
-        '<h1 style="margin:1mm 0 0;font-size:22px;line-height:1.05">'
-        f'{html.escape(str(ticket.get("ticket_name") or "Walk-in"))}</h1>'
-        '<p style="margin:0.5mm 0 1.5mm;font-size:14px;font-weight:700">'
-        f'{html.escape(str(ticket.get("clock") or ""))}</p>'
-        '<h2 style="margin:0;padding-top:1.2mm;border-top:0.4mm solid #000;font-size:22px;line-height:1.05">'
-        f"{name}</h2>"
-        f'{"".join(mods)}'
-        '<p style="margin:1.5mm 0 0;padding-top:1.2mm;border-top:0.6mm solid #000;font-size:18px;font-weight:800">'
-        f"{html.escape(count_label)}</p>"
+        f'</head><body style="width:{PRINT_WIDTH_MM}mm">'
+        f"<p>{order_name}</p>"
+        f"<h1>{drink}</h1>"
+        f"{''.join(mods)}"
         "</body></html>"
     )
 
