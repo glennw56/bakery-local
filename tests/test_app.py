@@ -282,6 +282,48 @@ def test_three_oldest_orders_and_per_drink_clear() -> None:
     assert _waiting(done.text) == []
 
 
+def test_queue_fifo_three_oldest_partial_clear_and_slide_in() -> None:
+    """Queue rules: 3 oldest in FIFO order, one drink stays on its order, full clear slides the next in.
+
+    Order names are not alphabetical, so a name sort would not match this sequence.
+    Six orders are placed. Only the three oldest are on the board.
+    """
+    _reset_drink_orders()
+    _place_drink_order("Zed", **{"0": 1})
+    _place_drink_order("Amy", **{"3": 1, "4": 1})
+    _place_drink_order("Mia", **{"1": 1})
+    _place_drink_order("Bob", **{"2": 1})
+    _place_drink_order("Ned", **{"5": 1})
+    board = _place_drink_order("Cal", **{"6": 1})
+
+    assert _tickets(board.text) == ["Zed", "Amy", "Mia"]
+    assert _waiting(board.text) == ["Bob", "Ned", "Cal"]
+    assert "5 open" not in board.text
+    assert "6 open" in board.text
+    assert "3 waiting" in board.text
+
+    partial = client.delete(
+        _line_url(board.text, "Amy", "Matcha"),
+        headers={"HX-Request": "true"},
+    )
+    assert partial.status_code == 200
+    assert _tickets(partial.text) == ["Zed", "Amy", "Mia"]
+    assert _waiting(partial.text) == ["Bob", "Ned", "Cal"]
+    assert "Matcha" not in partial.text
+    assert _line_url(partial.text, "Amy", "Biscoff")
+
+    slid = client.delete(
+        _line_url(partial.text, "Amy", "Biscoff"),
+        headers={"HX-Request": "true"},
+    )
+    assert slid.status_code == 200
+    assert "Amy" not in slid.text
+    assert "Matcha" not in slid.text
+    assert "Biscoff" not in slid.text
+    assert _tickets(slid.text) == ["Zed", "Mia", "Bob"]
+    assert _waiting(slid.text) == ["Ned", "Cal"]
+
+
 def test_clearing_one_of_a_double_leaves_the_order() -> None:
     _reset_drink_orders()
     placed = _place_drink_order("Double", **{"0": 2})
