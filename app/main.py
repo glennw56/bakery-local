@@ -6,6 +6,10 @@ are the view; HTMX swaps fragments in place (not an Angular SPA).
 Drink board: last N minutes (default 15), newest first (ordered_at desc).
 Tap a ticket → DELETE /board/tickets/{id} (drink is made, it drops off).
 Demo drink is POST /board/demo-tick. Poll: GET /board/tickets every 10s.
+
+Drink order test (not the live board): /test/drinks. Same demo drink list.
+Orders of those drinks only. The board shows the 3 oldest open orders.
+Tap a drink to clear that drink; the order leaves when every drink is gone.
 """
 
 from __future__ import annotations
@@ -19,13 +23,37 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db, init_db
+from app.passprnt import (
+    claim_job,
+    enqueue_print_jobs,
+    finish_job,
+    job_for_line,
+    jobs_for_order,
+    load_ticket,
+    passprnt_url,
+    pending_jobs,
+    release_job,
+    render_ticket_html,
+    sample_ticket,
+)
+from app.drink_orders import (
+    BOARD_SLOTS,
+    OrderRejected,
+    clear_drink_line,
+    create_test_order,
+    lines_from_quantities,
+    list_open_orders,
+    menu_from_demo,
+    normalize_ticket_name,
+    reset_test_orders,
+)
 from app.models import DrinkModifier, DrinkTicket, LoyaltyMember, MerchItem, Note, SalesDaily, SalesSummary
 from app import loyalty as loyalty_svc
 from app import weekend as weekend_svc
@@ -100,6 +128,9 @@ DEMO_DRINKS = [
     ),
 ]
 
+# Same list as the kitchen demo drinks. The test counter orders from this.
+DRINK_MENU = menu_from_demo(DEMO_DRINKS)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -114,6 +145,11 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 def _is_htmx(request: Request) -> bool:
     return request.headers.get("hx-request") == "true"
+
+
+async def form_map(request: Request) -> dict[str, str]:
+    form = await request.form()
+    return {str(key): str(value) for key, value in form.multi_items()}
 
 
 def _utc_now() -> datetime:
@@ -425,6 +461,264 @@ def board_demo_tick(
             {"minutes": minutes, "tickets": ticket_views(rows)},
         )
     return RedirectResponse(f"/board?minutes={minutes}", status_code=303)
+
+
+def test_order_view(order) -> dict:
+    now = datetime.now(timezone.utc)
+    ordered = _as_utc(order.ordered_at)
+    age = max(0, int((now - ordered).total_seconds() // 60))
+    lines = sorted(order.lines, key=lambda line: line.id)
+    return {
+        "id": order.id,
+        "ticket_name": order.ticket_name or "Walk-in",
+        "clock": chicago_clock(order.ordered_at),
+        "age_min": age,
+        "drink_qty": sum(line.qty for line in lines),
+        "lines": [
+            {
+                "id": line.id,
+                "drink_name": line.drink_name,
+                "qty": line.qty,
+                "slug": line.drink_name.lower().replace(" ", "-"),
+                "modifiers": parse_modifiers(line.modifiers_json),
+            }
+            for line in lines
+        ],
+    }
+
+
+def test_board_context(db: Session, error: str = "") -> dict:
+    orders = list_open_orders(db)
+    shown = orders[:BOARD_SLOTS]
+    waiting = orders[BOARD_SLOTS:]
+    return {
+        "orders": [test_order_view(order) for order in shown],
+        "waiting": [test_order_view(order) for order in waiting],
+        "open_count": len(orders),
+        "slots": BOARD_SLOTS,
+        "error": error,
+        "menu": DRINK_MENU,
+    }
+
+
+def _with_test_print(request: Request, context: dict) -> dict:
+    back = f"{str(request.base_url).rstrip('/')}/test/drinks?print_test=1"
+    context["test_print_url"] = passprnt_url(render_ticket_html(sample_ticket()), back)
+    return context
+
+
+def _pending_print_links(request: Request, db: Session) -> list[dict]:
+    """Real PassPRNT anchors for drinks still waiting. Oldest first."""
+    links = []
+    for job in pending_jobs(db):
+        row = _print_row(job)
+        links.append(
+            {
+                "line_id": row["id"],
+                "label": row["drink_name"] or row["ticket_name"] or "Drink",
+                "created_ms": row["created_ms"],
+                "passprnt": _passprnt_for_job(request, job),
+            }
+        )
+    return links
+
+
+def _print_page_context(request: Request, db: Session, context: dict) -> dict:
+    context = _with_test_print(request, context)
+    context["print_links"] = _pending_print_links(request, db)
+    context["debug"] = request.query_params.get("debug") == "1"
+    return context
+
+
+def _test_board_response(request: Request, db: Session, error: str = ""):
+    return templates.TemplateResponse(
+        request,
+        "test_drinks/_board.html",
+        test_board_context(db, error),
+    )
+
+
+@app.get("/test/drinks", response_class=HTMLResponse)
+def test_drinks_page(request: Request, db: Session = Depends(get_db)):
+    """Local test counter. Does not change the live /board."""
+    return templates.TemplateResponse(
+        request,
+        "test_drinks/index.html",
+        _print_page_context(request, db, test_board_context(db)),
+    )
+
+
+@app.get("/test/drinks/board", response_class=HTMLResponse)
+def test_drinks_board(request: Request, db: Session = Depends(get_db)):
+    return _test_board_response(request, db)
+
+
+@app.post("/test/drinks/orders", response_class=HTMLResponse)
+def test_drinks_place(
+    request: Request,
+    form: dict[str, str] = Depends(form_map),
+    db: Session = Depends(get_db),
+):
+    """Place one order made only of drinks from DRINK_MENU."""
+    quantities = {item["key"]: form.get(f"qty_{item['key']}", "0") for item in DRINK_MENU}
+    try:
+        lines = lines_from_quantities(DRINK_MENU, quantities)
+    except OrderRejected as exc:
+        if _is_htmx(request):
+            return _test_board_response(request, db, error=exc.message)
+        return templates.TemplateResponse(
+            request,
+            "test_drinks/index.html",
+            _print_page_context(request, db, test_board_context(db, error=exc.message)),
+            status_code=400,
+        )
+    order = create_test_order(
+        db,
+        ordered_at=_utc_now(),
+        ticket_name=normalize_ticket_name(form.get("ticket_name", "")),
+        lines=lines,
+    )
+    jobs = enqueue_print_jobs(db, order, chicago_clock(order.ordered_at))
+    if _is_htmx(request):
+        response = _test_board_response(request, db)
+        response.headers["HX-Trigger"] = "orderPlaced"
+        response.headers["X-Print-Order"] = str(order.id)
+        response.headers["X-Print-Lines"] = ",".join(str(job.line_id) for job in jobs)
+        return response
+    return RedirectResponse("/test/drinks", status_code=303)
+
+
+def _print_back_url(request: Request, line_id: int) -> str:
+    base = str(request.base_url).rstrip("/")
+    return f"{base}/test/drinks?print_line={line_id}"
+
+
+def _passprnt_for_job(request: Request, job) -> str:
+    return passprnt_url(render_ticket_html(load_ticket(job)), _print_back_url(request, job.line_id))
+
+
+def _print_row(job) -> dict:
+    ticket = load_ticket(job)
+    return {
+        "id": job.line_id,
+        "order_id": job.order_id,
+        "ticket_name": ticket.get("ticket_name") or "",
+        "drink_name": ticket.get("drink_name") or "",
+        "created_ms": int(job.created_at.replace(tzinfo=timezone.utc).timestamp() * 1000),
+    }
+
+
+@app.get("/test/drinks/lines/{line_id}/ticket", response_class=HTMLResponse)
+def test_drinks_line_ticket(line_id: int, db: Session = Depends(get_db)):
+    """The one-drink HTML PassPRNT prints for this line."""
+    job = job_for_line(db, line_id)
+    if job is None:
+        return Response("No ticket for that drink.", status_code=404)
+    return HTMLResponse(render_ticket_html(load_ticket(job)))
+
+
+@app.get("/test/drinks/orders/{order_id}/ticket", response_class=HTMLResponse)
+def test_drinks_ticket(order_id: int, db: Session = Depends(get_db)):
+    """Laptop preview of every drink ticket on an order, one slip after another."""
+    import html as html_lib
+
+    jobs = jobs_for_order(db, order_id)
+    if not jobs:
+        return Response("No ticket for that order.", status_code=404)
+    frames = []
+    for job in jobs:
+        doc = html_lib.escape(render_ticket_html(load_ticket(job)), quote=True)
+        frames.append(
+            f'<iframe sandbox srcdoc="{doc}" '
+            'style="width:58mm;height:78mm;border:0;background:#fff;display:block;margin:12px auto;"></iframe>'
+        )
+    return HTMLResponse(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Drink tickets</title>"
+        "<style>body{margin:0;background:#111;}</style></head>"
+        f"<body>{''.join(frames)}</body></html>"
+    )
+
+
+@app.get("/test/drinks/print-links", response_class=HTMLResponse)
+def test_drinks_print_links(
+    request: Request,
+    debug: str = Query(""),
+    db: Session = Depends(get_db),
+):
+    """PassPRNT anchors as HTML. The page inserts a link once and does not rewrite it."""
+    return templates.TemplateResponse(
+        request,
+        "test_drinks/_print_links.html",
+        {
+            "print_links": _pending_print_links(request, db),
+            "debug": debug == "1" or request.query_params.get("debug") == "1",
+        },
+    )
+
+
+@app.get("/test/drinks/print-feed")
+def test_drinks_print_feed(request: Request, db: Session = Depends(get_db)):
+    """Drink lines waiting to print, oldest first, each with its PassPRNT link.
+
+    The link is built with the same function as Test print. The page copies
+    it onto an <a href> from this HTML and does not change that anchor later.
+    """
+    drinks = []
+    for job in pending_jobs(db):
+        row = _print_row(job)
+        row["passprnt"] = _passprnt_for_job(request, job)
+        drinks.append(row)
+    return {"drinks": drinks}
+
+
+@app.post("/test/drinks/lines/{line_id}/print-claim")
+def test_drinks_print_claim(line_id: int, request: Request, db: Session = Depends(get_db)):
+    """One tablet claims this drink. A second claim does not print it again."""
+    job = claim_job(db, line_id)
+    if job is None:
+        return JSONResponse({"error": "already taken"}, status_code=409)
+    return {
+        "line_id": job.line_id,
+        "order_id": job.order_id,
+        "passprnt": _passprnt_for_job(request, job),
+    }
+
+
+@app.post("/test/drinks/lines/{line_id}/print-done")
+def test_drinks_print_done(line_id: int, db: Session = Depends(get_db)):
+    job = finish_job(db, line_id)
+    if job is None:
+        return JSONResponse({"error": "unknown drink"}, status_code=404)
+    return {"line_id": job.line_id, "status": job.status}
+
+
+@app.post("/test/drinks/lines/{line_id}/print-release")
+def test_drinks_print_release(line_id: int, db: Session = Depends(get_db)):
+    job = release_job(db, line_id)
+    if job is None:
+        return JSONResponse({"error": "unknown drink"}, status_code=404)
+    return {"line_id": job.line_id, "status": job.status}
+
+
+@app.delete("/test/drinks/lines/{line_id}", response_class=HTMLResponse)
+def test_drinks_clear_line(
+    line_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Tap one drink. The order stays until every drink on it is gone."""
+    clear_drink_line(db, line_id)
+    if _is_htmx(request):
+        return _test_board_response(request, db)
+    return RedirectResponse("/test/drinks", status_code=303)
+
+
+@app.post("/test/drinks/reset", response_class=HTMLResponse)
+def test_drinks_reset(request: Request, db: Session = Depends(get_db)):
+    reset_test_orders(db)
+    if _is_htmx(request):
+        return _test_board_response(request, db)
+    return RedirectResponse("/test/drinks", status_code=303)
 
 
 @app.get("/loyalty", response_class=HTMLResponse)

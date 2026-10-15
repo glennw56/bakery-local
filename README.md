@@ -35,6 +35,13 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 | `GET /board/tickets` | Ticket-list fragment; HTMX polls every 10s |
 | `DELETE /board/tickets/{id}` | Tap-to-clear: drink is made, ticket drops off |
 | `POST /board/demo-tick` | Dev-only: insert a random demo drink (no Square) |
+| `GET /test/drinks` | Local test only: place drink orders, see the 3 oldest, clear one drink at a time |
+| `GET /test/drinks/lines/{id}/ticket` | 58mm HTML for one drink (what PassPRNT prints) |
+| `GET /test/drinks/orders/{id}/ticket` | Laptop preview of that order's drink tickets |
+| `GET /test/drinks/print-feed` | Drinks waiting to print, oldest first |
+| `POST /test/drinks/lines/{id}/print-claim` | Claim one drink and return its PassPRNT URL |
+| `POST /test/drinks/lines/{id}/print-done` | Mark that drink printed |
+| `POST /test/drinks/lines/{id}/print-release` | Put a failed drink back in the queue |
 | `GET /loyalty` | Member book: search, segment chips, hometown rollup, dense table |
 | `GET /loyalty.csv` | Same filters as the list, UTF-8 CSV attachment |
 | `GET /loyalty/{id}` | One-member dossier (balance, marketing, points ledger) |
@@ -57,6 +64,37 @@ htmx 2.x is vendored at `static/htmx.min.js` (offline).
 4. Add to Home Screen if you want. Keep the tablet plugged in, brightness up, auto-lock off.
 
 `?minutes=15` is the default window. Newest tickets sit first. Tap a ticket when the drink is done and it drops off. The list refreshes every 10 seconds.
+
+## Drink order test (not the live board)
+
+Local page only. It does not change `/board`, and it does not write `drink_tickets`.
+
+With the app running (`./scripts/run.sh`), open:
+
+http://127.0.0.1:8000/test/drinks
+
+The menu is the same demo drink list the kitchen board already uses (Fruit Tea, Viet Coffee, Milk Tea, Matcha, Biscoff, with the same modifiers). Set quantities and place an order. The barista side shows the **3 oldest** open orders, oldest first. Drinks you have not started stay in a waiting row. Tap a drink to clear that drink. The order leaves the board only when every drink on it is cleared, and the next oldest order slides into the open slot.
+
+Test orders are stored in `test_drink_orders` / `test_drink_lines`. **Clear test orders** wipes those rows and any unprinted tickets.
+
+## Drink ticket on the tablet (PassPRNT)
+
+The drink station tablet prints on the existing Star TSP100IV over Bluetooth. Square Register and its Bluetooth printer are not involved.
+
+1. Install Star’s free **PassPRNT** app on the tablet (iOS or Android).
+2. In the tablet’s Bluetooth settings, pair the TSP100IV. In PassPRNT, pick that printer. Load 58mm paper with the paper guide. The TSP100IV prints 50.8mm of that roll.
+3. On the shop laptop, `HOST=0.0.0.0 ./scripts/run.sh`. On the tablet, open `http://<laptop-lan-ip>:8000/test/drinks`.
+4. Turn on **Print on this tablet**. Leave that tab open.
+
+**Test print**, next to the toggle, is a normal link. Tap it to send a one-line sample ticket. It does not place an order.
+
+Android Chrome opens `starpassprnt://` from a link that was written into the page, and drops the same address when script assigns it. With **Print on this tablet** on, placing an order stays on the board and shows a **Print** link for the oldest unprinted drink. That link is a real `href`, built with the same function as Test print, and the page does not rewrite it while it is on screen. The tap is not handled by script. The link's `ping` tells the server the drink was taken while the browser follows the href. Come back and tap **Print** for the next drink. Open `?debug=1` to see each href and its length under the link. Each ticket is the order name, that one drink, and its modifiers (sweet, ice, milk, boba, flavor). It does not include a price or a "Drink 1 of 3" count. PassPRNT cuts after each job (`cut=partial`). A quantity above 1 stays on that drink's name as xN. The board does not add a drink onto an order that is already open; a new line queued later gets its own Print link and does not reprint the drinks already sent.
+
+Each drink line prints once. A failed return puts only that drink back on **Print**.
+
+PassPRNT is called as `starpassprnt://v1/print/nopreview` with `html` (one drink), `size=406` (406 dots, the TSP100IV 58mm print width), `cut=partial`, `popup=disable`, and `back` set to this board. Separate jobs are used because PassPRNT applies `cut` after the whole job, and HTML becomes one raster, so a page break in one document would not cut between drinks. `size=2w7` is not used: Star’s table does not list it for the TSP100IV, and an invalid size falls back to 72mm.
+
+On Cloud Run the container sees plain HTTP from the platform proxy. Uvicorn is started with `--proxy-headers --forwarded-allow-ips='*'` (`scripts/docker-entrypoint.sh` and `scripts/run.sh`) so `X-Forwarded-Proto: https` makes that back URL `https`. The proxy address is not localhost, and the default allow list would ignore the header.
 
 ## Loyalty + CSV + hometown
 

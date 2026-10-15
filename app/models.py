@@ -86,6 +86,62 @@ class DrinkTicket(Base):
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="local")
 
 
+class TestDrinkOrder(Base):
+    """One open order on the drinks-only test counter. Not read by /board."""
+
+    __tablename__ = "test_drink_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ordered_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    ticket_name: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+
+    lines: Mapped[list[TestDrinkLine]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan",
+    )
+
+
+class TestDrinkLine(Base):
+    """One drink on a test order. Clearing the drink deletes this row, not the order."""
+
+    __tablename__ = "test_drink_lines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("test_drink_orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    drink_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    modifiers_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    qty: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    order: Mapped[TestDrinkOrder] = relationship(back_populates="lines")
+
+
+class TestPrintJob(Base):
+    """One PassPRNT ticket for one drink line.
+
+    The ticket JSON is a snapshot from the moment that line was queued, so
+    clearing the drink on the board does not change what the tablet prints.
+    line_id is not a foreign key: the drink can leave the board before the
+    tablet has printed. One order has one job per line, and a failed print
+    returns only that line to the queue.
+    """
+
+    __tablename__ = "test_print_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    line_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    order_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    ticket_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    printed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class LoyaltyMember(Base):
     """One Square loyalty account, denormalized for list/export.
 

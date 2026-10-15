@@ -14,7 +14,10 @@ HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8000}"
 RELOAD="${RELOAD:-1}"
 
-set -- .venv/bin/uvicorn app.main:app --host "$HOST" --port "$PORT"
+# Trust X-Forwarded-Proto from any proxy (Cloud Run's address is not localhost).
+# With no forwarded header, local URLs stay http.
+set -- .venv/bin/uvicorn app.main:app --host "$HOST" --port "$PORT" \
+  --proxy-headers --forwarded-allow-ips='*'
 case "$RELOAD" in
   1|true|TRUE|yes|YES) set -- "$@" --reload ;;
 esac
@@ -22,4 +25,5 @@ esac
 echo "Listening on http://${HOST}:${PORT}  (RELOAD=${RELOAD})"
 echo "Dashboard  http://${HOST}:${PORT}/"
 echo "Drink board http://${HOST}:${PORT}/board"
+echo "Drink order test http://${HOST}:${PORT}/test/drinks"
 PYTHONPATH=. exec "$@"

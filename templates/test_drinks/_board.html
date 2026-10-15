@@ -1,0 +1,58 @@
+<div class="kds-board-inner">
+  <p class="kds-board-status">{{ slots }} oldest open orders · {{ open_count }} open · {{ waiting|length }} waiting · oldest first</p>
+  {% if error %}
+  <p class="kds-order-error" role="alert">{{ error }}</p>
+  {% endif %}
+  {% if waiting %}
+  <div class="kds-waiting" aria-label="Orders waiting behind the three oldest">
+    <span class="kds-waiting-label">Waiting, not on the board yet</span>
+    {% for w in waiting %}
+    <span class="kds-waiting-name" data-waiting="{{ w.ticket_name }}">{{ w.ticket_name }}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div class="kds-orders">
+    {% for o in orders %}
+    <section class="kds-order" data-ticket="{{ o.ticket_name }}" id="order-{{ o.id }}">
+      <header class="kds-ticket-head kds-order-head">
+        <time>{{ o.clock }}</time>
+        <span class="kds-age">{{ o.age_min }}m</span>
+        <span class="kds-name">{{ o.ticket_name }}</span>
+        <span class="kds-qty">{{ o.drink_qty }}</span>
+      </header>
+      <p class="kds-order-meta">{% if o.drink_qty == 1 %}1 drink left{% else %}{{ o.drink_qty }} drinks left{% endif %} · tap a drink, not the order</p>
+      <div class="kds-order-lines">
+        {% for line in o.lines %}
+        <article class="kds-ticket drink-{{ line.slug }}"
+                 data-order="{{ o.ticket_name }}"
+                 data-drink="{{ line.drink_name }}"
+                 title="Tap to clear this drink"
+                 aria-label="Clear {{ line.drink_name }} on {{ o.ticket_name }}"
+                 hx-delete="/test/drinks/lines/{{ line.id }}"
+                 hx-target="#order-board"
+                 hx-swap="innerHTML"
+                 hx-disabled-elt="this">
+          <header class="kds-ticket-head">
+            <span class="kds-qty">×{{ line.qty }}</span>
+          </header>
+          <h2>{{ line.drink_name }}</h2>
+          {% if line.modifiers %}
+          <ul class="kds-mods">
+            {% for mod in line.modifiers %}
+            <li>{% if mod.group %}<span class="kds-group">{{ mod.group }}</span> {% endif %}{{ mod.value }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+          <p class="kds-tap">Tap to clear this drink</p>
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+    {% for _ in range(slots - orders|length) %}
+    <section class="kds-order kds-order-empty" aria-hidden="true">
+      <p>Open slot</p>
+    </section>
+    {% endfor %}
+  </div>
+</div>

@@ -60,7 +60,20 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     """Create tables if they do not exist. Called on app startup."""
+    from sqlalchemy import inspect, text
+
     from app import models  # noqa: F401 — register mappers
+    from app.models import TestPrintJob
 
     db_path().parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    # Earlier builds stored one print row per order. Drink tickets are per line.
+    inspector = inspect(engine)
+    if "test_print_jobs" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("test_print_jobs")}
+    if "line_id" in columns:
+        return
+    with engine.begin() as connection:
+        connection.execute(text("DROP TABLE test_print_jobs"))
+    TestPrintJob.__table__.create(bind=engine)
